@@ -1,0 +1,10 @@
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks git --pre-commit --staged --redact --no-banner
+elif command -v docker >/dev/null 2>&1; then
+  docker run --rm -v "$PWD:/repo:ro" -w /repo zricethezav/gitleaks:v8.30.1 git --pre-commit --staged --redact --no-banner
+else
+  echo "Gitleaks is required to commit. Install Gitleaks v8.30.1 or Docker Desktop; see the Gitleaks setup section in README.md." >&2
+  exit 1
+fi
+
+corepack pnpm exec lint-staged

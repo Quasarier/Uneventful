@@ -1,0 +1,45 @@
+{
+  "name": "campuspulse",
+  "private": true,
+  "packageManager": "pnpm@10.7.1",
+  "engines": {
+    "node": ">=22.13.0",
+    "pnpm": ">=10.7.1"
+  },
+  "scripts": {
+    "dev": "docker compose up -d && corepack pnpm --parallel --filter @campuspulse/api --filter @campuspulse/web run dev",
+    "dev:apps": "corepack pnpm --parallel --filter @campuspulse/api --filter @campuspulse/web run dev",
+    "dev:services": "docker compose up -d",
+    "build": "corepack pnpm -r --if-present build",
+    "lint": "eslint apps --max-warnings=0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "corepack pnpm -r --if-present typecheck",
+    "test": "corepack pnpm -r --if-present test",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@next/eslint-plugin-next": "^15.2.4",
+    "@commitlint/cli": "^19.8.1",
+    "@commitlint/config-conventional": "^19.8.1",
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.14.0",
+    "eslint-config-prettier": "^10.1.1",
+    "eslint-plugin-security": "^4.2.1",
+    "globals": "^16.0.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.5.0",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.2",
+    "typescript-eslint": "^8.26.1",
+    "vitest": "^5.1.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "postcss": "^8.5.18"
+    }
+  },
+  "lint-staged": {
+    "*.{js,mjs,cjs,ts,tsx,json,md,yml,yaml,css}": "prettier --write"
+  }
+}
