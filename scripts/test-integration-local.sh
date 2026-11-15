@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_ROOT"
+
+NODE_BIN="$(command -v node || command -v node.exe || true)"
+if [ -z "$NODE_BIN" ]; then
+  echo "Node.js is required to generate temporary credentials and validate URLs." >&2
+  exit 1
+fi
+
+if command -v node >/dev/null 2>&1 && command -v corepack >/dev/null 2>&1; then
+  PNPM_MODE="native"
+elif command -v corepack.cmd >/dev/null 2>&1 && command -v cmd.exe >/dev/null 2>&1; then
+  PNPM_MODE="windows"
+else
+  echo "Corepack is required to run the repository's pinned pnpm version." >&2
+  exit 1
+fi
+
+RUN_ID="$(date +%s)-$$"
+POSTGRES_CONTAINER="uneventful-it-postgres-$RUN_ID"
+REDIS_CONTAINER="uneventful-it-redis-$RUN_ID"
+
+cleanup() {
+  status=$?
+  trap - EXIT INT TERM
+  docker rm --force "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
+  docker rm --force "$REDIS_CONTAINER" >/dev/null 2>&1 || true
+  exit "$status"
+}
+
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'status=$?; printf "Integration runner failed at line %s (exit %s).\n" "$LINENO" "$status" >&2; exit "$status"' ERR
+
+validate_local_url() {
+  local variable_name="$1"
+  local value="$2"
+
+  "$NODE_BIN" - "$variable_name" "$value" <<'NODE'
+const [name, value] = process.argv.slice(2);
+let parsed;
+
+try {
+  parsed = new URL(value);
+} catch {
+  console.error(`${name} must be a valid URL.`);
+  process.exit(1);
+}
+
+const hostname = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+if (!['localhost', '127.0.0.1', '::1'].includes(hostname)) {
+  console.error(`${name} must target localhost, 127.0.0.1, or ::1.`);
+  process.exit(1);
+}
+NODE
+}
+
+run_pnpm() {
+  if [ "$PNPM_MODE" = "native" ]; then
+    corepack pnpm "$@"
+  else
+    export WSLENV="${WSLENV:+$WSLENV:}DATABASE_URL:MIGRATION_DATABASE_URL:REDIS_URL:TEST_DATABASE_URL:TEST_MIGRATION_DATABASE_URL:TEST_REDIS_URL:NODE_ENV"
+    cmd.exe /d /s /c "corepack pnpm $*"
+  fi
+}
+
+for url_name in \
+  DATABASE_URL \
+  MIGRATION_DATABASE_URL \
+  SHADOW_DATABASE_URL \
+  REDIS_URL \
+  TEST_DATABASE_URL \
+  TEST_MIGRATION_DATABASE_URL \
+  TEST_REDIS_URL
+do
+  if [ -n "$(printenv "$url_name" 2>/dev/null || true)" ]; then
+    validate_local_url "$url_name" "$(printenv "$url_name")"
+  fi
+done
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "Docker is required to run the local integration suite." >&2
+  exit 1
+fi
+
+POSTGRES_DB="uneventful_ci"
+POSTGRES_USER="uneventful_ci_bootstrap"
+BOOTSTRAP_PASSWORD="$("$NODE_BIN" -p "require('node:crypto').randomBytes(24).toString('base64url')")"
+MIGRATOR_PASSWORD="$("$NODE_BIN" -p "require('node:crypto').randomBytes(24).toString('base64url')")"
+APP_PASSWORD="$("$NODE_BIN" -p "require('node:crypto').randomBytes(24).toString('base64url')")"
+REDIS_PASSWORD="$("$NODE_BIN" -p "require('node:crypto').randomBytes(24).toString('base64url')")"
+
+POSTGRES_IMAGE="postgres:17-alpine@sha256:d3244e8ce3f165ee3c93d9c4a4b1d0fe48b3a89e2287b717fdcbbde92d405065"
+REDIS_IMAGE="redis:7.4-alpine"
+
+echo "Starting the disposable PostgreSQL 17 container..."
+docker run --detach --rm \
+  --name "$POSTGRES_CONTAINER" \
+  --publish 127.0.0.1::5432 \
+  --env POSTGRES_DB="$POSTGRES_DB" \
+  --env POSTGRES_USER="$POSTGRES_USER" \
+  --env POSTGRES_PASSWORD="$BOOTSTRAP_PASSWORD" \
+  --health-cmd "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB" \
+  --health-interval 5s \
+  --health-timeout 5s \
+  --health-retries 20 \
+  "$POSTGRES_IMAGE" >/dev/null
+
+echo "Starting the disposable Redis 7 container..."
+docker run --detach --rm \
+  --name "$REDIS_CONTAINER" \
+  --publish 127.0.0.1::6379 \
+  --health-cmd "redis-cli --no-auth-warning -a $REDIS_PASSWORD ping" \
+  --health-interval 5s \
+  --health-timeout 5s \
+  --health-retries 20 \
+  "$REDIS_IMAGE" \
+  redis-server --requirepass "$REDIS_PASSWORD" >/dev/null
+
+wait_for_healthy() {
+  local container="$1"
+  local description="$2"
+  local attempt=0
+  local health
+
+  while [ "$attempt" -lt 60 ]; do
+    health="$(docker inspect --format='{{.State.Health.Status}}' "$container" 2>/dev/null || true)"
+    if [ "$health" = "healthy" ]; then
+      return
+    fi
+    if [ "$health" = "unhealthy" ]; then
+      echo "$description container failed its health check." >&2
+      return 1
+    fi
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+
+  echo "Timed out waiting for the $description container to become healthy." >&2
+  return 1
+}
+
+wait_for_healthy "$POSTGRES_CONTAINER" "PostgreSQL"
+wait_for_healthy "$REDIS_CONTAINER" "Redis"
+
+POSTGRES_PORT="$(docker port "$POSTGRES_CONTAINER" 5432/tcp | awk -F: 'END { print $NF }')"
+REDIS_PORT="$(docker port "$REDIS_CONTAINER" 6379/tcp | awk -F: 'END { print $NF }')"
+
+if [ -z "$POSTGRES_PORT" ] || [ -z "$REDIS_PORT" ]; then
+  echo "Could not determine the temporary PostgreSQL and Redis host ports." >&2
+  exit 1
+fi
+
+DATABASE_URL="postgresql://uneventful_app:$APP_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB?schema=public"
+MIGRATION_DATABASE_URL="postgresql://uneventful_migrator:$MIGRATOR_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB?schema=public"
+TEST_DATABASE_URL="$DATABASE_URL"
+TEST_MIGRATION_DATABASE_URL="$MIGRATION_DATABASE_URL"
+TEST_REDIS_URL="redis://:$REDIS_PASSWORD@127.0.0.1:$REDIS_PORT"
+REDIS_URL="$TEST_REDIS_URL"
+
+validate_local_url DATABASE_URL "$DATABASE_URL"
+validate_local_url MIGRATION_DATABASE_URL "$MIGRATION_DATABASE_URL"
+validate_local_url TEST_DATABASE_URL "$TEST_DATABASE_URL"
+validate_local_url TEST_MIGRATION_DATABASE_URL "$TEST_MIGRATION_DATABASE_URL"
+validate_local_url TEST_REDIS_URL "$TEST_REDIS_URL"
+
+export DATABASE_URL MIGRATION_DATABASE_URL TEST_DATABASE_URL
+export TEST_MIGRATION_DATABASE_URL TEST_REDIS_URL REDIS_URL
+export NODE_ENV=test
+export UNEVENTFUL_MIGRATOR_DB_PASSWORD="$MIGRATOR_PASSWORD"
+export UNEVENTFUL_APP_DB_PASSWORD="$APP_PASSWORD"
+
+docker exec -i \
+  --env "UNEVENTFUL_MIGRATOR_DB_PASSWORD=$MIGRATOR_PASSWORD" \
+  --env "UNEVENTFUL_APP_DB_PASSWORD=$APP_PASSWORD" \
+  "$POSTGRES_CONTAINER" \
+  psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+  < "$REPO_ROOT/apps/api/prisma/provision-roles.sql"
+
+echo "Applying all migrations to the disposable PostgreSQL database..."
+run_pnpm --filter @uneventful/api db:deploy
+
+echo "Running API PostgreSQL and Redis integration tests..."
+run_pnpm --filter @uneventful/api test:integration
+
+echo "Integration tests passed; disposable containers will now be removed."

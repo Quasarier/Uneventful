@@ -1,6 +1,6 @@
-# CampusPulse
+# Uneventful
 
-CampusPulse is a pnpm monorepo with a Next.js web app and a NestJS API.
+Uneventful is a pnpm monorepo with a Next.js web app and a NestJS API.
 
 ## Requirements
 
@@ -11,6 +11,17 @@ CampusPulse is a pnpm monorepo with a Next.js web app and a NestJS API.
 ## Local setup
 
 1. Copy `.env.example` to `.env`, then replace its sample values. The OAuth values must come from a Google OAuth client configured for your local callback URL.
+   The API also requires an RSA key pair for access-token signing. In PowerShell, generate a local pair and start the apps from the same terminal so the PEM values are inherited without printing or committing them:
+
+   ```powershell
+   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out .\jwt-private.pem
+   openssl pkey -in .\jwt-private.pem -pubout -out .\jwt-public.pem
+   $env:JWT_PRIVATE_KEY_B64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes("$PWD\jwt-private.pem"))
+   $env:JWT_PUBLIC_KEY_B64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes("$PWD\jwt-public.pem"))
+   ```
+
+   Keep both PEM files and the private-key environment value private. PEM files are ignored by Git. For production, store OAuth credentials, signing keys, session secret, and database credentials in the deployment platform's secret manager; never put production values in `.env` files or CI logs. Follow [the signing-key rotation procedure](docs/authentication-key-rotation.md) for a zero-downtime planned rotation.
+
 2. Install dependencies:
 
    ```powershell
@@ -32,6 +43,43 @@ CampusPulse is a pnpm monorepo with a Next.js web app and a NestJS API.
 
    The hook fails with an installation message if neither Gitleaks nor Docker is available. CI installs the same pinned Gitleaks version automatically.
 
+## Authentication API
+
+The API starts Google OIDC at `GET /api/v1/auth/google`. `GOOGLE_CALLBACK_URL` must be the fixed `/api/v1/auth/google/callback` URI registered in the Google OAuth client's authorized redirect URIs; the callback and popup destinations are configuration-only and never use caller-supplied redirect parameters. The callback validates the OIDC signature, audience, issuer, nonce, hosted-domain claim, verified email, and exact email domain before creating or updating a user. The API redirects the popup to the configured web origin with only a success/error status. The popup posts only that status to the explicit web-origin target; the opener accepts it only from the opened popup and exact configured origin, then fetches the session from the API. No token is sent through `postMessage`. The rotating refresh token uses an HttpOnly, Secure, SameSite=Lax `__Secure-` cookie.
+
+`POST /api/v1/auth/refresh` rotates the refresh cookie and returns a new 15-minute access token; send the configured web origin, include credentials, and include `X-Uneventful-CSRF: 1`. `POST /api/v1/auth/logout` requires the same Origin and custom header and revokes the refresh-token family. Authenticated `POST /api/v1/auth/logout-all` uses bearer authentication, revokes all refresh tokens, and increments the user's token version. A database trigger increments the token version and revokes refresh sessions on every role change, including direct application-role updates. All other API routes require a valid access token unless explicitly marked `@Public()`.
+
+Authenticated API requests are limited to 300 per minute per user through Redis. Anonymous requests use a separate, configurable per-IP limit (`ANONYMOUS_RATE_LIMIT_PER_MINUTE`, default 1,200 and minimum 301); OAuth start and callback IP limits are separately configurable with `GOOGLE_OAUTH_START_RATE_LIMIT_PER_15_MINUTES` and `GOOGLE_OAUTH_CALLBACK_RATE_LIMIT_PER_15_MINUTES` (both default to 1,200). Verified-account callbacks remain limited to 10 per 15 minutes. Campus networks commonly place many people behind one NAT IP, so anonymous users on the same campus egress share an IP bucket; authenticated users do not share that bucket. Limits fail closed with a service-unavailable response if Redis cannot enforce them on protected API and authentication routes. `/api/v1/health/live` does not use Redis, while `/api/v1/health/ready` checks both PostgreSQL and Redis. `TRUST_PROXY_HOPS` defaults to `0`; set it only to the exact number of trusted reverse-proxy hops so client IP limits cannot be bypassed by spoofed forwarding headers. Helmet supplies API security headers, and credentialed CORS accepts only the configured `WEB_ORIGIN`. JSON and URL-encoded API request bodies are capped at 64 KiB, including chunked requests without `Content-Length`; image bytes are uploaded directly to the private object-storage staging prefix under the separately constrained signed policy.
+
+Generate the API route inventory from Nest controller/module metadata with `corepack pnpm --filter @uneventful/api routes`.
+
+For manual verification with a dedicated Google development project, follow the [OAuth test checklist](docs/oauth-manual-test-checklist.md).
+
+## Events API
+
+The authenticated events API supports `GET /api/v1/events` with `page` (maximum 10,000), `limit` (maximum 100), `categoryId`, `clubId`, `startDate`, `endDate`, and `q` filters; `GET /api/v1/events/:id`; `POST /api/v1/events`; and `PATCH /api/v1/events/:id`. Date-only `endDate` values include the entire UTC day. Students can read only public, approved events. Organizers can read public approved events and events belonging to clubs where they hold active membership; admins can read all events. Organizers can manage events only for clubs where they hold active membership; admins can manage all clubs. Event responses use an explicit field allowlist and omit internal uploader keys and creator/approver IDs. Nested club/category objects contain only names and slugs. Rejection reasons are visible only to active club members and admins. New events start as `DRAFT`. Organizers submit drafts or rejected events with `POST /:id/submit`; admins approve or reject pending events with `POST /:id/approve` or `POST /:id/reject` (rejection requires a reason). An admin cannot approve an event they created. Authorized organizers and admins cancel with `POST /:id/cancel`. Editing an approved event returns it to `PENDING_APPROVAL`; `PATCH` does not accept `status`, `clubId`, creator, or approver fields. State transitions and event creation are written to the append-only audit log in the same database transaction.
+
+Event descriptions are sanitized on the API using the documented tag, attribute, and protocol allowlist in `apps/api/src/events/event-description-sanitizer.ts`. Timestamps must include an explicit UTC offset and `timeZone` must be a valid IANA zone. Images use a private S3-compatible bucket configured with `OBJECT_STORAGE_BUCKET` and `OBJECT_STORAGE_REGION`; set `OBJECT_STORAGE_ENDPOINT` for a local S3-compatible service and supply credentials through the AWS SDK credential chain (use an IAM role in production).
+
+The API generates an opaque key under `event-uploads/staging/<event-id>/` and issues a short-lived signed POST policy fixing the exact content type and limiting the body to 1–5 MiB. The uploader's user ID, event ID, key, and expiry are recorded together; only that user can confirm it for that event. Confirmation checks the stored size before reading, decodes with the exact-pinned `sharp` dependency (`limitInputPixels: 40_000_000`, 10-second processing timeout, one frame/page), verifies its actual format, applies EXIF orientation before re-encoding strips metadata, and writes a new server-generated object under `events/<event-id>/`. Animated WebP uploads are flattened to their first frame. The staging source is deleted in a `finally` path after success or processing failure; the staging lifecycle rule is a backstop if object storage is unavailable during cleanup. The untrusted staging key is never used as the final asset. Configure bucket Block Public Access on, Object Ownership as bucket-owner-enforced, ACLs disabled, and default encryption enabled. For S3 CORS, set `AllowedOrigins` to the exact `WEB_ORIGIN`, `AllowedMethods` to `POST` only, `AllowedHeaders` to only the upload form's required headers, and expose no headers unless the client needs a specific one. Do not enable public `GET`. Expire only `event-uploads/staging/` objects with a lifecycle rule (for example after one day); do not expire the `events/` prefix.
+
+Example lifecycle rule (adjust the expiration period to the deployment's upload completion window):
+
+```json
+{
+  "Rules": [
+    {
+      "ID": "expire-abandoned-event-image-uploads",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "event-uploads/staging/" },
+      "Expiration": { "Days": 1 }
+    }
+  ]
+}
+```
+
+The authenticated `GET /api/v1/events/:id/image` API endpoint streams the normalized image with `X-Content-Type-Options: nosniff`, `Content-Disposition: attachment`, and private/no-store caching. It is rate-limited to 120 requests per minute by both client IP and authenticated user; Redis failures fail closed. Students can fetch only public, approved event images; organizers can fetch approved images and events belonging to their active clubs; admins can fetch all event images. Hidden/unknown event IDs return the same 404 response. Do not expose direct object-store GET URLs: S3 object metadata does not reliably supply these browser response headers, so image delivery must remain behind the API or an equivalent trusted proxy/CDN response-header policy. The client posts the signed form fields plus `file` to the returned URL, then calls `POST /api/v1/events/:id/image-upload/confirm`.
+
 ## Verification
 
 ```powershell
@@ -41,4 +89,49 @@ corepack pnpm test
 corepack pnpm build
 ```
 
-Docker Compose reads the root `.env` file automatically. Database and Redis credentials have no Compose defaults; startup fails if the required variables are absent.
+The API has PostgreSQL-backed authentication and events HTTP integration tests. They require a disposable, migrated test database. Event fixtures clean up dependent rows, but intentionally retain actors referenced by append-only audit records; use a fresh database for each run. `TEST_DATABASE_URL` must be the application-role connection string, and `TEST_MIGRATION_DATABASE_URL` must be the separate migration-role connection string for privileged fixture cleanup:
+
+```powershell
+$env:TEST_DATABASE_URL = "postgresql://uneventful_app:<test-password>@localhost:5432/uneventful_ci?schema=public"
+$env:TEST_MIGRATION_DATABASE_URL = "postgresql://uneventful_migrator:<migration-password>@localhost:5432/uneventful_ci?schema=public"
+$env:TEST_REDIS_URL = "redis://localhost:6379"
+corepack pnpm --filter @uneventful/api test:integration
+```
+
+CI provisions the PostgreSQL and Redis test services and runs the integration suite automatically.
+
+To run the same API integration suite locally against fresh PostgreSQL 17 and Redis 7 containers, with separate least-privilege application and migration roles, run this from the repository root:
+
+```bash
+bash scripts/test-integration-local.sh
+```
+
+The script requires Docker, Node.js, and Corepack/pnpm dependencies to be installed. It publishes the containers only on loopback using automatically assigned non-default ports, generates throwaway credentials, applies every migration to a new database as `uneventful_migrator`, and runs the integration tests with `uneventful_app`. It rejects preconfigured database or Redis URLs whose host is not localhost, and removes both containers on success, failure, or interruption.
+
+Docker Compose reads the root `.env` file automatically. Database and Redis credentials have no Compose defaults; startup fails if the required variables are absent. On a new PostgreSQL data volume, Compose creates the separate `uneventful_migrator` and `uneventful_app` roles from the two role-password variables. If the volume already exists, run the provisioning SQL once as the database bootstrap user:
+
+```powershell
+docker compose cp apps/api/prisma/provision-roles.sql postgres:/tmp/provision-roles.sql
+docker compose exec -T postgres sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /tmp/provision-roles.sql'
+```
+
+The application connects only with `DATABASE_URL`; Prisma migration commands use `MIGRATION_DATABASE_URL`. The migration role has schema/DDL privileges but is not a superuser and cannot create databases or roles. Provisioning also creates a dedicated shadow database for local `migrate dev`; `SHADOW_DATABASE_URL` points to it. Production deploys should use `db:deploy`, which reapplies runtime grants after migrations. The application role has no schema-create or table-ownership privileges, cannot alter or drop tables, cannot access Prisma migration metadata, and cannot update, delete, or truncate audit logs.
+
+## Database schema, migrations, and seed
+
+The Prisma schema is in `apps/api/prisma/schema.prisma`. From the repository root, use:
+
+```powershell
+corepack pnpm --filter @uneventful/api db:validate
+corepack pnpm --filter @uneventful/api db:generate
+corepack pnpm --filter @uneventful/api db:migrate
+corepack pnpm --filter @uneventful/api db:seed
+```
+
+`db:migrate` creates or applies a development migration. Production deploys should run `corepack pnpm --filter @uneventful/api db:deploy`; do not run `migrate dev` in production. The seed command exits with an error when `NODE_ENV=production` and is otherwise restricted to `development` and `test`. It creates repeatable example users and campus event data, but intentionally does not create tickets, check-ins, audit records, or refresh tokens.
+
+Venue bookings use a PostgreSQL GiST exclusion constraint with half-open time ranges, so adjacent reservations are allowed while overlapping approved reservations for one venue are rejected. The migration enables `btree_gist`; the database migration role must be allowed to create that extension. CHECK constraints also reject non-positive capacities and invalid event/booking time ranges. Unique names and slugs on soft-deletable clubs, categories, venues, events, and notification dedupe keys are enforced only while a row is active. These partial unique indexes are migration-managed because Prisma does not represent their predicates; preserve them in future SQL migrations and query active rows with `deletedAt: null`. User email and Google subject remain globally unique to prevent reassignment of an account identity after soft deletion.
+
+An RSVP row is unique per `(eventId, userId)`, including when cancelled. To RSVP again after cancellation, transactionally update that existing row from `CANCELLED` to `GOING` and clear its waitlist position, or to `WAITLISTED` with a positive position if capacity is unavailable; do not insert a second RSVP. If the RSVP already has a revoked ticket, reissue it by updating that ticket record rather than inserting another ticket. This preserves history and satisfies the database uniqueness constraints.
+
+Database regression fixtures run as the application role to check approved-booking overlap behavior, CHECK constraints, soft-delete key reuse, and denied audit-log/DDL operations. A separate migration-role fixture verifies the audit-log mutation and truncate triggers.
