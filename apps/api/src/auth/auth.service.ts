@@ -168,6 +168,22 @@ export class AuthService implements OnModuleInit {
     await this.repository.revokeUserSessions(userId, new Date());
   }
 
+  async getProfile(userId: string) {
+    const user = await this.repository.findUserProfile(userId);
+    if (!user || !user.isActive || user.deletedAt) {
+      throw new UnauthorizedException('This account is unavailable.');
+    }
+
+    return {
+      id: user.id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      avatarUrl: user.avatarUrl,
+      role: user.role,
+    };
+  }
+
   async authenticateAccessToken(token: string): Promise<AuthPrincipal> {
     try {
       const keyId = decodeProtectedHeader(token).kid;

@@ -21,7 +21,23 @@ const environmentSchema = z
     NODE_ENV: z.enum(['development', 'test', 'production']),
     PORT: z.coerce.number().int().min(1).max(65535),
     DATABASE_URL: z.string().url(),
-    REDIS_URL: z.string().url(),
+    REDIS_URL: z
+      .string()
+      .url()
+      .refine((value) => {
+        const url = new URL(value);
+        const databasePathIsValid =
+          url.pathname === '' ||
+          url.pathname === '/' ||
+          (/^\/\d+$/.test(url.pathname) && Number.isSafeInteger(Number(url.pathname.slice(1))));
+        return (
+          ['redis:', 'rediss:'].includes(url.protocol) &&
+          databasePathIsValid &&
+          !url.search &&
+          !url.hash
+        );
+      }, 'Must use redis or rediss with an optional numeric database path'),
+    RSVP_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(120).default(10),
     ANONYMOUS_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(301).max(10_000).default(1_200),
     GOOGLE_OAUTH_START_RATE_LIMIT_PER_15_MINUTES: z.coerce
       .number()

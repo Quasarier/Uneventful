@@ -6,9 +6,10 @@ import { AppService } from './app.service';
 import { EventsModule } from './events/events.module';
 import { DatabaseModule } from './database/database.module';
 import { HealthService } from './health.service';
+import { RsvpsModule } from './rsvps/rsvps.module';
 
 @Module({
-  imports: [AppConfigModule, AuthModule, EventsModule, DatabaseModule],
+  imports: [AppConfigModule, AuthModule, EventsModule, RsvpsModule, DatabaseModule],
   controllers: [AppController],
   providers: [AppService, HealthService],
 })

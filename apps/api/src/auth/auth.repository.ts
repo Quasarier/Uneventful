@@ -23,6 +23,17 @@ const authStateSelect = {
   deletedAt: true,
 } satisfies Prisma.UserSelect;
 
+const profileSelect = {
+  id: true,
+  email: true,
+  firstName: true,
+  lastName: true,
+  avatarUrl: true,
+  role: true,
+  isActive: true,
+  deletedAt: true,
+} satisfies Prisma.UserSelect;
+
 const refreshUserSelect = {
   id: true,
   role: true,
@@ -95,6 +106,13 @@ export class AuthRepository {
     return this.prisma.user.findUnique({
       where: { id },
       select: authStateSelect,
+    });
+  }
+
+  findUserProfile(id: string) {
+    return this.prisma.user.findUnique({
+      where: { id },
+      select: profileSelect,
     });
   }
 

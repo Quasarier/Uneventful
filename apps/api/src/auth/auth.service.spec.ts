@@ -59,6 +59,7 @@ describe('AuthService', () => {
     } as ConfigService<Environment, true>;
     repository = {
       findUserState: vi.fn(),
+      findUserProfile: vi.fn(),
       findRefreshByHash: vi.fn(),
       createOrUpdateGoogleUser: vi.fn(),
       createRefreshToken: vi.fn(),
@@ -82,6 +83,40 @@ describe('AuthService', () => {
       UnauthorizedException,
     );
     expect(repository.findUserState).not.toHaveBeenCalled();
+  });
+
+  it('returns only the authenticated user profile fields and rejects inactive accounts', async () => {
+    vi.spyOn(repository, 'findUserProfile').mockResolvedValue({
+      id: userId,
+      email: 'student@example.edu',
+      firstName: 'Campus',
+      lastName: 'Student',
+      avatarUrl: null,
+      role: 'STUDENT',
+      isActive: true,
+      deletedAt: null,
+    });
+
+    await expect(service.getProfile(userId)).resolves.toEqual({
+      id: userId,
+      email: 'student@example.edu',
+      firstName: 'Campus',
+      lastName: 'Student',
+      avatarUrl: null,
+      role: 'STUDENT',
+    });
+
+    vi.mocked(repository.findUserProfile).mockResolvedValue({
+      id: userId,
+      email: 'student@example.edu',
+      firstName: 'Campus',
+      lastName: 'Student',
+      avatarUrl: null,
+      role: 'STUDENT',
+      isActive: false,
+      deletedAt: null,
+    });
+    await expect(service.getProfile(userId)).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
   it('rejects tampered access-token signatures', async () => {

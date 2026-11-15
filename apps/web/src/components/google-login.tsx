@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { API_BASE_URL, WEB_ORIGIN } from '@/lib/auth-config';
+import { useAuth } from '@/components/auth-provider';
 
 interface ApiSession {
   accessToken: string;
@@ -17,41 +18,46 @@ interface AuthPopupMessage {
 type LoginState = 'signed-out' | 'waiting' | 'loading' | 'signed-in' | 'error';
 
 export function GoogleLogin() {
+  const { acceptSession } = useAuth();
   const popupRef = useRef<WindowProxy | null>(null);
   const messageHandledRef = useRef(false);
   const [state, setState] = useState<LoginState>('signed-out');
   const [session, setSession] = useState<ApiSession | null>(null);
 
-  const receivePopupMessage = useCallback(async (event: MessageEvent<unknown>) => {
-    const popup = popupRef.current;
-    if (
-      !popup ||
-      event.origin !== WEB_ORIGIN ||
-      event.source !== popup ||
-      !isAuthPopupMessage(event.data) ||
-      messageHandledRef.current
-    ) {
-      return;
-    }
+  const receivePopupMessage = useCallback(
+    async (event: MessageEvent<unknown>) => {
+      const popup = popupRef.current;
+      if (
+        !popup ||
+        event.origin !== WEB_ORIGIN ||
+        event.source !== popup ||
+        !isAuthPopupMessage(event.data) ||
+        messageHandledRef.current
+      ) {
+        return;
+      }
 
-    messageHandledRef.current = true;
-    popupRef.current = null;
-    popup.close();
+      messageHandledRef.current = true;
+      popupRef.current = null;
+      popup.close();
 
-    if (!event.data.success) {
-      setState('error');
-      return;
-    }
+      if (!event.data.success) {
+        setState('error');
+        return;
+      }
 
-    setState('loading');
-    try {
-      const newSession = await fetchSession();
-      setSession(newSession);
-      setState('signed-in');
-    } catch {
-      setState('error');
-    }
-  }, []);
+      setState('loading');
+      try {
+        const newSession = await fetchSession();
+        setSession(newSession);
+        acceptSession(newSession);
+        setState('signed-in');
+      } catch {
+        setState('error');
+      }
+    },
+    [acceptSession],
+  );
 
   useEffect(() => {
     window.addEventListener('message', receivePopupMessage);
@@ -81,10 +87,14 @@ export function GoogleLogin() {
 
   return (
     <section aria-label="Google sign-in">
-      <button onClick={startLogin} type="button">
+      <button
+        className="w-full rounded-full bg-forest px-5 py-3.5 font-bold text-white transition hover:bg-forest/90 focus-visible:outline"
+        onClick={startLogin}
+        type="button"
+      >
         Continue with Google
       </button>
-      <p aria-live="polite" role="status">
+      <p aria-live="polite" className="mt-3 min-h-5 text-sm text-ink/70" role="status">
         {state === 'signed-out' && 'Not signed in.'}
         {state === 'waiting' && 'Waiting for Google sign-in.'}
         {state === 'loading' && 'Loading your session.'}

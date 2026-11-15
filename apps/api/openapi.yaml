@@ -1,0 +1,501 @@
+openapi: 3.1.0
+info:
+  title: CampusPulse frontend API
+  version: 1.0.0
+  description: OpenAPI contracts consumed by the CampusPulse web application.
+servers:
+  - url: http://localhost:3001/api/v1
+    description: Local development
+paths:
+  /auth/refresh:
+    post:
+      operationId: refreshSession
+      summary: Rotate the current refresh session
+      security: []
+      parameters:
+        - in: header
+          name: X-Uneventful-CSRF
+          required: true
+          schema:
+            type: string
+            const: '1'
+      responses:
+        '200':
+          description: A rotated session and access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '401':
+          $ref: '#/components/responses/Error'
+  /auth/logout:
+    post:
+      operationId: logout
+      summary: Revoke the current refresh session
+      security: []
+      parameters:
+        - in: header
+          name: X-Uneventful-CSRF
+          required: true
+          schema:
+            type: string
+            const: '1'
+      responses:
+        '204':
+          description: The session was revoked.
+        '403':
+          $ref: '#/components/responses/Error'
+  /auth/me:
+    get:
+      operationId: getCurrentUser
+      summary: Get the authenticated user's public profile
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: The current user's profile.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '401':
+          $ref: '#/components/responses/Error'
+  /events:
+    get:
+      operationId: listEvents
+      summary: List visible events
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - in: query
+          name: categoryId
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: clubId
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: startDate
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: endDate
+          schema:
+            type: string
+        - in: query
+          name: q
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 100
+      responses:
+        '200':
+          description: A page of events visible to the authenticated user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventPage'
+        '401':
+          $ref: '#/components/responses/Error'
+  /events/{id}:
+    get:
+      operationId: getEvent
+      summary: Get an event visible to the authenticated user
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EventId'
+      responses:
+        '200':
+          description: The event.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+        '404':
+          $ref: '#/components/responses/Error'
+  /events/{id}/rsvp/status:
+    get:
+      operationId: getEventRsvpStatus
+      summary: Get the current user's RSVP and capacity status
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EventId'
+      responses:
+        '200':
+          description: RSVP and capacity state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventRsvpStatus'
+        '404':
+          $ref: '#/components/responses/Error'
+  /events/{id}/rsvp:
+    post:
+      operationId: createRsvp
+      summary: RSVP to an event or join its waitlist
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EventId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                checkConflicts:
+                  type: boolean
+                  default: false
+      responses:
+        '201':
+          description: RSVP created.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RsvpResult'
+        '409':
+          $ref: '#/components/responses/Error'
+    delete:
+      operationId: cancelRsvp
+      summary: Cancel the current user's RSVP
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EventId'
+      responses:
+        '200':
+          description: RSVP cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelledRsvp'
+        '404':
+          $ref: '#/components/responses/Error'
+  /events/{id}/rsvp/ticket:
+    post:
+      operationId: issueTicket
+      summary: Issue or rotate a ticket for a confirmed RSVP
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EventId'
+      responses:
+        '201':
+          description: A ticket token. Keep it in memory and do not cache it.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketToken'
+        '409':
+          $ref: '#/components/responses/Error'
+  /rsvps/me:
+    get:
+      operationId: listMyRsvps
+      summary: List the authenticated user's active RSVPs
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Active RSVP records and safe ticket metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyRsvps'
+        '401':
+          $ref: '#/components/responses/Error'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    EventId:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    Error:
+      description: Request failed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+  schemas:
+    ApiError:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+        message:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+        error:
+          type: string
+      required: [statusCode, message]
+    Session:
+      type: object
+      properties:
+        accessToken:
+          type: string
+        tokenType:
+          type: string
+          const: Bearer
+        expiresIn:
+          type: integer
+          minimum: 1
+      required: [accessToken, tokenType, expiresIn]
+    UserProfile:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        firstName:
+          type: string
+        lastName:
+          type: string
+        avatarUrl:
+          type: [string, 'null']
+          format: uri
+        role:
+          type: string
+          enum: [STUDENT, ORGANIZER, ADMIN]
+      required: [id, email, firstName, lastName, avatarUrl, role]
+    EventClub:
+      type: object
+      properties:
+        name:
+          type: string
+        slug:
+          type: string
+      required: [name, slug]
+    EventCategory:
+      type: object
+      properties:
+        name:
+          type: string
+        slug:
+          type: string
+      required: [name, slug]
+    Event:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        slug:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum: [DRAFT, PENDING_APPROVAL, APPROVED, REJECTED, CANCELLED]
+        startAt:
+          type: string
+          format: date-time
+        endAt:
+          type: string
+          format: date-time
+        timeZone:
+          type: string
+        capacity:
+          type: [integer, 'null']
+        isPublic:
+          type: boolean
+        clubId:
+          type: string
+          format: uuid
+        categoryId:
+          type: string
+          format: uuid
+        rejectionReason:
+          type: [string, 'null']
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        hasImage:
+          type: boolean
+        club:
+          $ref: '#/components/schemas/EventClub'
+        category:
+          $ref: '#/components/schemas/EventCategory'
+      required:
+        - id
+        - title
+        - slug
+        - description
+        - status
+        - startAt
+        - endAt
+        - timeZone
+        - capacity
+        - isPublic
+        - clubId
+        - categoryId
+        - rejectionReason
+        - createdAt
+        - updatedAt
+        - hasImage
+        - club
+        - category
+    EventPage:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Event'
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+        totalPages:
+          type: integer
+      required: [data, page, limit, total, totalPages]
+    RsvpStatus:
+      type: string
+      enum: [GOING, WAITLISTED, CANCELLED, CHECKED_IN]
+    EventRsvpStatus:
+      type: object
+      properties:
+        status:
+          oneOf:
+            - $ref: '#/components/schemas/RsvpStatus'
+            - type: 'null'
+        waitlistPosition:
+          type: [integer, 'null']
+        capacity:
+          type: [integer, 'null']
+        goingCount:
+          type: integer
+        isFull:
+          type: boolean
+      required: [status, waitlistPosition, capacity, goingCount, isFull]
+    RsvpResult:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        eventId:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/RsvpStatus'
+        waitlistPosition:
+          type: [integer, 'null']
+        ticketToken:
+          type: string
+      required: [id, eventId, status, waitlistPosition]
+    CancelledRsvp:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        eventId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          const: CANCELLED
+      required: [id, eventId, status]
+    TicketMetadata:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ISSUED, REDEEMED, REVOKED]
+        expiresAt:
+          type: string
+          format: date-time
+      required: [status, expiresAt]
+    MyRsvp:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/RsvpStatus'
+        waitlistPosition:
+          type: [integer, 'null']
+        createdAt:
+          type: string
+          format: date-time
+        event:
+          $ref: '#/components/schemas/Event'
+        ticket:
+          oneOf:
+            - $ref: '#/components/schemas/TicketMetadata'
+            - type: 'null'
+      required: [id, status, waitlistPosition, createdAt, event, ticket]
+    MyRsvps:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/MyRsvp'
+      required: [data]
+    TicketToken:
+      type: object
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        rsvpId:
+          type: string
+          format: uuid
+        token:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+      required: [eventId, rsvpId, token, expiresAt]

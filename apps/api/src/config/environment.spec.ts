@@ -25,6 +25,7 @@ const validEnvironment = {
 describe('validateEnvironment', () => {
   it('parses valid configuration and coerces the port', () => {
     expect(validateEnvironment(validEnvironment).PORT).toBe(3001);
+    expect(validateEnvironment(validEnvironment).RSVP_RATE_LIMIT_PER_MINUTE).toBe(10);
   });
 
   it('fails when required keys are missing', () => {
@@ -120,6 +121,19 @@ describe('validateEnvironment', () => {
         ANONYMOUS_RATE_LIMIT_PER_MINUTE: '300',
       }),
     ).toThrow(/ANONYMOUS_RATE_LIMIT_PER_MINUTE/);
+  });
+
+  it('validates the RSVP rate limit and Redis URL protocol', () => {
+    expect(
+      validateEnvironment({ ...validEnvironment, RSVP_RATE_LIMIT_PER_MINUTE: '24' })
+        .RSVP_RATE_LIMIT_PER_MINUTE,
+    ).toBe(24);
+    expect(() =>
+      validateEnvironment({ ...validEnvironment, RSVP_RATE_LIMIT_PER_MINUTE: '121' }),
+    ).toThrow(/RSVP_RATE_LIMIT_PER_MINUTE/);
+    expect(() =>
+      validateEnvironment({ ...validEnvironment, REDIS_URL: 'https://localhost' }),
+    ).toThrow(/REDIS_URL/);
   });
 
   it('defaults OAuth IP limits to campus-NAT-friendly values and accepts overrides', () => {

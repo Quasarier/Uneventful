@@ -1,0 +1,18 @@
+{
+  "name": "CampusPulse",
+  "short_name": "CampusPulse",
+  "description": "Find and join events across campus.",
+  "start_url": "/events",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6f7f1",
+  "theme_color": "#123d35",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

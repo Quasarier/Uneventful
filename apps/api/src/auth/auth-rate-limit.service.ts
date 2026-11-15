@@ -26,7 +26,8 @@ export type AuthRateLimitScope =
   | 'google-callback-ip'
   | 'google-account'
   | 'event-image-ip'
-  | 'event-image-user';
+  | 'event-image-user'
+  | 'rsvp-user';
 
 export interface RateLimitMessages {
   exceeded: string;

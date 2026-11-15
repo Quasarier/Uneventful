@@ -3,6 +3,7 @@ import {
   Controller,
   ForbiddenException,
   Get,
+  Header,
   HttpCode,
   HttpStatus,
   Post,
@@ -132,6 +133,16 @@ export class AuthController {
     this.assertCookieRequest(request);
     this.clearRefreshCookie(response);
     await this.authService.logout(this.getCookie(request, REFRESH_COOKIE));
+  }
+
+  @Get('me')
+  @Header('Cache-Control', 'private, no-store')
+  async getCurrentUser(@Req() request: AuthenticatedRequest) {
+    const userId = request.user?.id;
+    if (!userId) {
+      throw new UnauthorizedException();
+    }
+    return this.authService.getProfile(userId);
   }
 
   @Post('logout-all')
