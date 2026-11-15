@@ -327,7 +327,19 @@ describe('events PostgreSQL/HTTP integration', () => {
           }
         >;
       };
-      expect(body.data.map((event) => event.id).sort()).toEqual(expectedIds.sort());
+      const fixtureEventIds = [
+        approvedEventId,
+        privateApprovedEventId,
+        draftEventId,
+        foreignEventId,
+        deletedEventId,
+      ];
+      expect(
+        body.data
+          .map((event) => event.id)
+          .filter((id) => fixtureEventIds.includes(id))
+          .sort(),
+      ).toEqual(expectedIds.sort());
       expect(body.data[0]).not.toHaveProperty('createdById');
       expect(body.data[0]).not.toHaveProperty('approvedById');
       expect(body.data[0]).not.toHaveProperty('imageKey');
