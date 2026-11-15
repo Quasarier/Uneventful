@@ -12,11 +12,15 @@ node_modules/
 .pnpm-store/
 dist/
 coverage/
+playwright-report/
+test-results/
 .next/
 out/
 *.tsbuildinfo
 .turbo/
 .vercel/
+apps/api/generated/prisma/
+*.pem
 .DS_Store
 Thumbs.db
 *.log

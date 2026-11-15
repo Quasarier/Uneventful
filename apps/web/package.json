@@ -1,5 +1,5 @@
 {
-  "name": "@campuspulse/web",
+  "name": "@uneventful/web",
   "private": true,
   "scripts": {
     "build": "next build",
@@ -7,7 +7,8 @@
     "start": "next start --port 3000",
     "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests src",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "next": "^15.2.4",
@@ -15,6 +16,7 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.1",
     "@types/node": "^22.13.10",
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4"

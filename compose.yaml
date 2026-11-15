@@ -6,10 +6,13 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
       POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      UNEVENTFUL_MIGRATOR_DB_PASSWORD: ${UNEVENTFUL_MIGRATOR_DB_PASSWORD:?Set UNEVENTFUL_MIGRATOR_DB_PASSWORD in .env}
+      UNEVENTFUL_APP_DB_PASSWORD: ${UNEVENTFUL_APP_DB_PASSWORD:?Set UNEVENTFUL_APP_DB_PASSWORD in .env}
     ports:
       - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./apps/api/prisma/provision-roles.sql:/docker-entrypoint-initdb.d/10-provision-roles.sql:ro
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
       interval: 5s
