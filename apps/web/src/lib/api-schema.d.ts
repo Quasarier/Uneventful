@@ -89,6 +89,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/events/{id}/attendees': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List attendee display names for an event
+     * @description Organizers must have active membership in the event's club. Admins may list attendees for any non-deleted event. Cancelled attendees are excluded unless an admin explicitly filters for CANCELLED. Limits above 100 are capped at 100.
+     */
+    get: operations['listEventAttendees'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/events/{id}/rsvp/status': {
     parameters: {
       query?: never;
@@ -227,6 +247,18 @@ export interface components {
       limit: number;
       total: number;
       totalPages: number;
+    };
+    EventAttendee: {
+      displayName: string;
+      /** @enum {string} */
+      status: 'GOING' | 'WAITLISTED' | 'CHECKED_IN' | 'CANCELLED';
+      waitlistPosition: number | null;
+    };
+    EventAttendeePage: {
+      data: components['schemas']['EventAttendee'][];
+      page: number;
+      limit: number;
+      total: number;
     };
     /** @enum {string} */
     RsvpStatus: 'GOING' | 'WAITLISTED' | 'CANCELLED' | 'CHECKED_IN';
@@ -418,6 +450,46 @@ export interface operations {
         };
       };
       404: components['responses']['Error'];
+    };
+  };
+  listEventAttendees: {
+    parameters: {
+      query?: {
+        page?: number;
+        /** @description Requested page size; values above 100 are capped at 100. */
+        limit?: number;
+        /** @description CANCELLED is returned only to admins who explicitly request it. */
+        status?: 'GOING' | 'WAITLISTED' | 'CHECKED_IN' | 'CANCELLED';
+      };
+      header?: never;
+      path: {
+        id: components['parameters']['EventId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Paginated attendee display names and RSVP state. */
+      200: {
+        headers: {
+          'Cache-Control'?: 'private, no-store';
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['EventAttendeePage'];
+        };
+      };
+      404: components['responses']['Error'];
+      /** @description Global or per-user request rate limit exceeded. */
+      429: {
+        headers: {
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
     };
   };
   getEventRsvpStatus: {
