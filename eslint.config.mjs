@@ -12,6 +12,7 @@ export default tseslint.config(
       '**/dist/**',
       '**/.next/**',
       '**/coverage/**',
+      'apps/api/generated/**',
       'pnpm-lock.yaml',
       'apps/web/next-env.d.ts',
     ],

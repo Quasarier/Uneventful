@@ -1,9 +1,23 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
+import { AuthProvider } from '@/components/auth-provider';
+import { PwaRegistrar } from '@/components/pwa-registrar';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'CampusPulse',
-  description: 'Campus event management',
+  title: {
+    default: 'Uneventful',
+    template: '%s | Uneventful',
+  },
+  description: 'Find and join events across campus.',
+  applicationName: 'Uneventful',
+  manifest: '/manifest.json',
+  icons: [{ rel: 'icon', url: '/icons/icon.svg', type: 'image/svg+xml' }],
+};
+
+export const viewport: Viewport = {
+  themeColor: '#123d35',
+  width: 'device-width',
+  initialScale: 1,
 };
 
 export default function RootLayout({
@@ -13,7 +27,12 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <AuthProvider>
+          <PwaRegistrar />
+          {children}
+        </AuthProvider>
+      </body>
     </html>
   );
 }

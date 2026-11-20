@@ -10,6 +10,29 @@ jobs:
   verify:
     name: Lint, type-check, test, and build
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine@sha256:d3244e8ce3f165ee3c93d9c4a4b1d0fe48b3a89e2287b717fdcbbde92d405065
+        env:
+          POSTGRES_DB: uneventful_ci
+          POSTGRES_USER: uneventful_ci_bootstrap
+          POSTGRES_PASSWORD: test-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U uneventful_ci_bootstrap -d uneventful_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -31,17 +54,136 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --verify-store-integrity
 
+      - name: Provision separate migration and application roles
+        run: psql "$BOOTSTRAP_DATABASE_URL" -v ON_ERROR_STOP=1 -f apps/api/prisma/provision-roles.sql
+        env:
+          BOOTSTRAP_DATABASE_URL: postgresql://uneventful_ci_bootstrap:test-only@localhost:5432/uneventful_ci
+          UNEVENTFUL_MIGRATOR_DB_PASSWORD: test-migrator
+          UNEVENTFUL_APP_DB_PASSWORD: test-app
+
+      - name: Validate Prisma schema and generate client
+        run: |
+          pnpm --filter @uneventful/api db:validate
+          pnpm --filter @uneventful/api db:generate
+        env:
+          DATABASE_URL: postgresql://uneventful_app:test-app@localhost:5432/uneventful_ci?schema=public
+          MIGRATION_DATABASE_URL: postgresql://uneventful_migrator:test-migrator@localhost:5432/uneventful_ci?schema=public
+          NODE_ENV: test
+
+      - name: Apply migrations and seed test data
+        run: |
+          pnpm --filter @uneventful/api db:deploy
+          pnpm --filter @uneventful/api db:seed
+        env:
+          DATABASE_URL: postgresql://uneventful_app:test-app@localhost:5432/uneventful_ci?schema=public
+          MIGRATION_DATABASE_URL: postgresql://uneventful_migrator:test-migrator@localhost:5432/uneventful_ci?schema=public
+          NODE_ENV: test
+
+      - name: Verify constraints and application-role privileges
+        run: pnpm --filter @uneventful/api exec prisma db execute --file prisma/verify-constraints.sql
+        env:
+          DATABASE_URL: postgresql://uneventful_app:test-app@localhost:5432/uneventful_ci?schema=public
+          MIGRATION_DATABASE_URL: postgresql://uneventful_app:test-app@localhost:5432/uneventful_ci?schema=public
+          NODE_ENV: test
+
+      - name: Verify audit-log triggers as migration owner
+        run: pnpm --filter @uneventful/api exec prisma db execute --file prisma/verify-audit-immutability.sql
+        env:
+          DATABASE_URL: postgresql://uneventful_app:test-app@localhost:5432/uneventful_ci?schema=public
+          MIGRATION_DATABASE_URL: postgresql://uneventful_migrator:test-migrator@localhost:5432/uneventful_ci?schema=public
+          NODE_ENV: test
+
+      - name: Verify seed refuses production
+        shell: bash
+        run: |
+          if output="$(env NODE_ENV=production DATABASE_URL=postgresql://invalid:invalid@localhost/invalid pnpm --filter @uneventful/api exec tsx prisma/seed.ts 2>&1)"; then
+            echo "Seed unexpectedly succeeded with NODE_ENV=production." >&2
+            exit 1
+          fi
+          if ! grep -Fq "Database seeding is disabled in production." <<<"$output"; then
+            echo "Seed failed for a reason other than the production guard." >&2
+            printf '%s\n' "$output" >&2
+            exit 1
+          fi
+          echo "Seed refused production as expected."
+
       - name: Lint
         run: pnpm lint
 
       - name: Type-check
         run: pnpm typecheck
 
-      - name: Unit tests
-        run: pnpm test
+      - name: API unit tests
+        run: pnpm --filter @uneventful/api test
+
+      - name: Web unit tests
+        run: pnpm --filter @uneventful/web test
+
+      - name: Install Playwright Chromium
+        run: pnpm --filter @uneventful/web exec playwright install --with-deps chromium
+
+      - name: Full Playwright end-to-end suite
+        run: pnpm --filter @uneventful/web test:e2e
+        env:
+          NEXT_PUBLIC_WEB_ORIGIN: http://localhost:3000
+          NEXT_PUBLIC_API_BASE_URL: http://localhost:3001/api/v1
+
+      - name: Full API PostgreSQL and Redis integration suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          results="$RUNNER_TEMP/api-integration-results.json"
+
+          set +e
+          pnpm --filter @uneventful/api test:integration \
+            --reporter=default \
+            --reporter=json \
+            --outputFile.json="$results"
+          test_exit=$?
+          set -e
+
+          if [[ ! -s "$results" ]]; then
+            echo "Vitest did not produce an integration test report." >&2
+            exit 1
+          fi
+
+          test_count="$(node -e '
+            const report = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+            if (!Number.isSafeInteger(report.numTotalTests)) {
+              throw new Error("Vitest report has no valid numTotalTests count.");
+            }
+            process.stdout.write(String(report.numTotalTests));
+          ' "$results")"
+          echo "API integration test count: $test_count"
+
+          node -e '
+            const path = require("node:path");
+            const report = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+            const files = report.testResults.map((result) =>
+              path.relative(process.cwd(), result.name).replaceAll("\\", "/")
+            ).sort();
+            console.log("API integration test files:");
+            for (const file of files) console.log(` - ${file}`);
+          ' "$results"
+
+          # Raise this threshold whenever integration tests are added.
+          minimum_test_count=56
+          if (( test_count < minimum_test_count )); then
+            echo "The API integration suite ran $test_count tests; minimum is $minimum_test_count." >&2
+            exit 1
+          fi
+
+          exit "$test_exit"
+        env:
+          TEST_DATABASE_URL: postgresql://uneventful_app:test-app@localhost:5432/uneventful_ci?schema=public
+          TEST_MIGRATION_DATABASE_URL: postgresql://uneventful_migrator:test-migrator@localhost:5432/uneventful_ci?schema=public
+          TEST_REDIS_URL: redis://localhost:6379
 
       - name: Build
         run: pnpm build
+        env:
+          NEXT_PUBLIC_WEB_ORIGIN: http://localhost:3000
+          NEXT_PUBLIC_API_BASE_URL: http://localhost:3001/api/v1
 
   gitleaks:
     name: gitleaks
