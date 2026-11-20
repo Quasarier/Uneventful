@@ -8,6 +8,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Query,
   Req,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -18,6 +19,7 @@ import { AuthRateLimitService, type RateLimitMessages } from '../auth/auth-rate-
 import type { AuthenticatedRequest, AuthPrincipal } from '../auth/auth.types';
 import type { Environment } from '../config/environment';
 import { CreateRsvpDto } from './dto/create-rsvp.dto';
+import { ListEventAttendeesDto } from './dto/list-event-attendees.dto';
 import { RsvpsService } from './rsvps.service';
 
 const rsvpRateLimitMessages: RateLimitMessages = {
@@ -53,6 +55,18 @@ export class RsvpsController {
     return this.rsvps.getStatus(eventId, principal.id);
   }
 
+  @Get(':id/attendees')
+  @Header('Cache-Control', 'private, no-store')
+  async listAttendees(
+    @Req() request: AuthenticatedRequest,
+    @Param('id', ParseUUIDPipe) eventId: string,
+    @Query() query: ListEventAttendeesDto,
+  ) {
+    const principal = requirePrincipal(request);
+    await this.consumeRateLimit(principal);
+    return this.rsvps.listEventAttendees(eventId, principal, query);
+  }
+
   @Post(':id/rsvp')
   @Roles(UserRole.STUDENT)
   @Header('Cache-Control', 'private, no-store')
@@ -68,6 +82,7 @@ export class RsvpsController {
 
   @Delete(':id/rsvp')
   @Roles(UserRole.STUDENT)
+  @Header('Cache-Control', 'private, no-store')
   async cancel(@Req() request: AuthenticatedRequest, @Param('id', ParseUUIDPipe) eventId: string) {
     const principal = requirePrincipal(request);
     await this.consumeRateLimit(principal);

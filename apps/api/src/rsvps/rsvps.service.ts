@@ -1,4 +1,6 @@
 import { Injectable } from '@nestjs/common';
+import type { AuthPrincipal } from '../auth/auth.types';
+import type { ListEventAttendeesDto } from './dto/list-event-attendees.dto';
 import { RsvpsRepository } from './rsvps.repository';
 
 @Injectable()
@@ -7,6 +9,10 @@ export class RsvpsService {
 
   listMine(userId: string) {
     return this.repository.listMine(userId);
+  }
+
+  listEventAttendees(eventId: string, actor: AuthPrincipal, query: ListEventAttendeesDto) {
+    return this.repository.listEventAttendees(eventId, actor, query);
   }
 
   getStatus(eventId: string, userId: string) {

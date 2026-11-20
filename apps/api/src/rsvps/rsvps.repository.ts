@@ -14,6 +14,12 @@ import {
 } from '../../generated/prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { toEventResponseDto } from '../events/event-response.dto';
+import type { AuthPrincipal } from '../auth/auth.types';
+import {
+  MAX_ATTENDEE_PAGE_SIZE,
+  type EventAttendeeDto,
+  type ListEventAttendeesDto,
+} from './dto/list-event-attendees.dto';
 
 type LockedUser = { id: string; role: string; is_active: boolean; deleted_at: Date | null };
 
@@ -21,6 +27,24 @@ const myRsvpEventInclude = {
   club: { select: { name: true, slug: true } },
   category: { select: { name: true, slug: true } },
 } satisfies Prisma.EventInclude;
+
+const visibleRsvpEventSelect = {
+  id: true,
+  title: true,
+  status: true,
+  startAt: true,
+  endAt: true,
+  capacity: true,
+  isPublic: true,
+} satisfies Prisma.EventSelect;
+
+const eventAttendeeSelect = {
+  status: true,
+  waitlistPosition: true,
+  user: { select: { firstName: true, lastName: true } },
+} satisfies Prisma.RsvpSelect;
+
+type EventAttendeeRecord = Prisma.RsvpGetPayload<{ select: typeof eventAttendeeSelect }>;
 
 @Injectable()
 export class RsvpsRepository {
@@ -57,19 +81,98 @@ export class RsvpsRepository {
     };
   }
 
+  async listEventAttendees(eventId: string, actor: AuthPrincipal, query: ListEventAttendeesDto) {
+    const page = query.page ?? 1;
+    const limit = Math.max(1, Math.min(query.limit ?? 20, MAX_ATTENDEE_PAGE_SIZE));
+
+    return this.prisma.$transaction(async (tx) => {
+      const event = await tx.event.findFirst({
+        where: {
+          id: eventId,
+          deletedAt: null,
+          ...(actor.role === 'ADMIN'
+            ? {}
+            : {
+                club: {
+                  is: {
+                    deletedAt: null,
+                    memberships: {
+                      some: {
+                        userId: actor.id,
+                        status: 'ACTIVE',
+                        user: { isActive: true, deletedAt: null },
+                      },
+                    },
+                  },
+                },
+              }),
+        },
+        select: { id: true },
+      });
+      if (!event || (actor.role !== 'ADMIN' && actor.role !== 'ORGANIZER')) {
+        throw new NotFoundException('Event not found.');
+      }
+
+      const canViewCancelled = actor.role === 'ADMIN' && query.status === RsvpStatus.CANCELLED;
+      const filterCancelledOnly = query.status === RsvpStatus.CANCELLED && actor.role !== 'ADMIN';
+      const where: Prisma.RsvpWhereInput = {
+        eventId,
+        ...(filterCancelledOnly
+          ? { status: { in: [] } }
+          : query.status
+            ? { status: query.status }
+            : { status: { in: [RsvpStatus.GOING, RsvpStatus.WAITLISTED, RsvpStatus.CHECKED_IN] } }),
+      };
+
+      let total = 0;
+      let rsvps: EventAttendeeRecord[] = [];
+      if (!filterCancelledOnly) {
+        [total, rsvps] = await Promise.all([
+          tx.rsvp.count({ where }),
+          tx.rsvp.findMany({
+            where,
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+            skip: (page - 1) * limit,
+            take: limit,
+            select: eventAttendeeSelect,
+          }),
+        ]);
+      }
+
+      await tx.auditLog.create({
+        data: {
+          actorId: actor.id,
+          action: 'EVENT_ATTENDEES_VIEWED',
+          entityType: 'Event',
+          entityId: eventId,
+          metadata: {
+            page,
+            limit,
+            ...(query.status ? { status: query.status } : {}),
+            includeCancelled: canViewCancelled,
+          },
+        },
+      });
+
+      const data: EventAttendeeDto[] = rsvps.map((rsvp) => ({
+        displayName: `${rsvp.user.firstName} ${rsvp.user.lastName}`.trim(),
+        status: rsvp.status,
+        waitlistPosition: rsvp.waitlistPosition,
+      }));
+
+      return { data, page, limit, total };
+    });
+  }
+
   async getStatus(eventId: string, userId: string) {
     const event = await this.prisma.event.findFirst({
-      where: {
-        id: eventId,
-        status: EventStatus.APPROVED,
-        isPublic: true,
-        deletedAt: null,
-      },
-      select: { capacity: true },
+      where: this.visibleRsvpEventWhere(eventId, userId),
+      select: visibleRsvpEventSelect,
     });
     if (!event) {
       throw new NotFoundException('Event not found.');
     }
+    this.assertRsvpOpen(event.startAt, event.endAt);
 
     const [goingCount, rsvp] = await Promise.all([
       this.prisma.rsvp.count({
@@ -110,12 +213,8 @@ export class RsvpsRepository {
           throw new ForbiddenException('Only students can RSVP.');
         }
 
-        await this.lockEvent(tx, eventId);
-        const event = await tx.event.findUnique({ where: { id: eventId } });
-        if (!event || event.deletedAt || !event.isPublic) {
-          throw new NotFoundException('Event not found.');
-        }
-        this.assertRsvpOpen(event.status, event.startAt, event.endAt);
+        const event = await this.lockVisibleEvent(tx, eventId, userId);
+        this.assertRsvpOpen(event.startAt, event.endAt);
 
         const existing = await tx.rsvp.findUnique({
           where: { eventId_userId: { eventId, userId } },
@@ -197,11 +296,8 @@ export class RsvpsRepository {
 
   async cancel(eventId: string, userId: string) {
     return this.prisma.$transaction(async (tx) => {
-      await this.lockEvent(tx, eventId);
-      const event = await tx.event.findUnique({ where: { id: eventId } });
-      if (!event || event.deletedAt) {
-        throw new NotFoundException('Event not found.');
-      }
+      const event = await this.lockVisibleEvent(tx, eventId, userId);
+      this.assertBeforeEventStart(event.startAt);
 
       const rsvp = await tx.rsvp.findUnique({
         where: { eventId_userId: { eventId, userId } },
@@ -213,6 +309,7 @@ export class RsvpsRepository {
       if (rsvp.status === RsvpStatus.CHECKED_IN) {
         throw new ConflictException('A checked-in RSVP cannot be cancelled.');
       }
+      this.assertBeforeEventStart(event.startAt);
 
       await tx.rsvp.update({
         where: { id: rsvp.id },
@@ -226,11 +323,7 @@ export class RsvpsRepository {
       }
 
       const promoteWaitlist =
-        rsvp.status === RsvpStatus.GOING &&
-        event.status === EventStatus.APPROVED &&
-        event.startAt > new Date() &&
-        event.endAt > new Date() &&
-        event.capacity !== null;
+        rsvp.status === RsvpStatus.GOING && event.endAt > new Date() && event.capacity !== null;
       if (promoteWaitlist) {
         await tx.rsvpPromotionOutbox.create({ data: { eventId } });
       }
@@ -356,6 +449,51 @@ export class RsvpsRepository {
     `;
   }
 
+  private async lockVisibleEvent(tx: Prisma.TransactionClient, eventId: string, userId: string) {
+    let event = await tx.event.findFirst({
+      where: this.visibleRsvpEventWhere(eventId, userId),
+      select: visibleRsvpEventSelect,
+    });
+    if (!event) {
+      throw new NotFoundException('Event not found.');
+    }
+
+    await this.lockEvent(tx, eventId);
+    event = await tx.event.findFirst({
+      where: this.visibleRsvpEventWhere(eventId, userId),
+      select: visibleRsvpEventSelect,
+    });
+    if (!event) {
+      throw new NotFoundException('Event not found.');
+    }
+    return event;
+  }
+
+  private visibleRsvpEventWhere(eventId: string, userId: string): Prisma.EventWhereInput {
+    return {
+      id: eventId,
+      status: EventStatus.APPROVED,
+      deletedAt: null,
+      OR: [
+        { isPublic: true },
+        {
+          club: {
+            is: {
+              deletedAt: null,
+              memberships: {
+                some: {
+                  userId,
+                  status: 'ACTIVE',
+                  user: { isActive: true, deletedAt: null },
+                },
+              },
+            },
+          },
+        },
+      ],
+    };
+  }
+
   private async nextWaitlistPosition(
     tx: Prisma.TransactionClient,
     eventId: string,
@@ -401,12 +539,15 @@ export class RsvpsRepository {
     });
   }
 
-  private assertRsvpOpen(status: EventStatus, startAt: Date, endAt: Date): void {
-    if (status !== EventStatus.APPROVED) {
-      throw new ConflictException('Only approved events can accept RSVPs.');
-    }
+  private assertRsvpOpen(startAt: Date, endAt: Date): void {
     if (startAt <= new Date() || endAt <= new Date()) {
       throw new ConflictException('This event is no longer accepting RSVPs.');
+    }
+  }
+
+  private assertBeforeEventStart(startAt: Date): void {
+    if (startAt <= new Date()) {
+      throw new ConflictException('RSVP cancellation is not allowed after the event starts.');
     }
   }
 }
