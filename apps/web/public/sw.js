@@ -1,4 +1,4 @@
-const CACHE_NAME = 'campuspulse-static-v1';
+const CACHE_NAME = 'uneventful-static-v1';
 const OFFLINE_URL = '/offline.html';
 const PRECACHE_URLS = [OFFLINE_URL, '/icons/icon.svg'];
 
@@ -18,7 +18,7 @@ self.addEventListener('activate', (event) => {
       .then((keys) =>
         Promise.all(
           keys
-            .filter((key) => key.startsWith('campuspulse-static-') && key !== CACHE_NAME)
+            .filter((key) => key.startsWith('uneventful-static-') && key !== CACHE_NAME)
             .map((key) => caches.delete(key)),
         ),
       )

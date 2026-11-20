@@ -9,7 +9,7 @@ export default function HomePage() {
         className="pointer-events-none absolute -right-32 -top-32 size-[28rem] rounded-full bg-mint/60 blur-3xl"
       />
       <header className="relative mx-auto flex max-w-7xl items-center justify-between">
-        <Link aria-label="CampusPulse home" className="flex items-center gap-3" href="/">
+        <Link aria-label="Uneventful home" className="flex items-center gap-3" href="/">
           <span
             aria-hidden="true"
             className="grid size-10 place-items-center rounded-2xl bg-forest text-mint"
@@ -24,7 +24,7 @@ export default function HomePage() {
               />
             </svg>
           </span>
-          <span className="font-display text-xl font-black tracking-tight">CampusPulse</span>
+          <span className="font-display text-xl font-black tracking-tight">Uneventful</span>
         </Link>
         <Link
           className="rounded-full px-4 py-2 text-sm font-bold text-forest underline decoration-forest/30 underline-offset-4 hover:decoration-forest"

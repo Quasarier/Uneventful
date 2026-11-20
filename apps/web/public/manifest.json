@@ -1,6 +1,6 @@
 {
-  "name": "CampusPulse",
-  "short_name": "CampusPulse",
+  "name": "Uneventful",
+  "short_name": "Uneventful",
   "description": "Find and join events across campus.",
   "start_url": "/events",
   "scope": "/",

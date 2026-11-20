@@ -5,11 +5,11 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: {
-    default: 'CampusPulse',
-    template: '%s | CampusPulse',
+    default: 'Uneventful',
+    template: '%s | Uneventful',
   },
   description: 'Find and join events across campus.',
-  applicationName: 'CampusPulse',
+  applicationName: 'Uneventful',
   manifest: '/manifest.json',
   icons: [{ rel: 'icon', url: '/icons/icon.svg', type: 'image/svg+xml' }],
 };

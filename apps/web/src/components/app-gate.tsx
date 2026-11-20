@@ -62,7 +62,7 @@ export function AppGate({ children }: Readonly<{ children: React.ReactNode }>) {
           className="rounded-3xl bg-white p-8 shadow-card"
           role={error ? 'alert' : 'status'}
         >
-          <p className="eyebrow">CampusPulse</p>
+          <p className="eyebrow">Uneventful</p>
           <p className="mt-3 text-lg font-semibold">{error || 'Checking your secure session…'}</p>
           {error ? (
             <button

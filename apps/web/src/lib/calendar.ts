@@ -50,7 +50,7 @@ export function createIcal(rsvps: MyRsvp[], createdAt = new Date()): string {
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//CampusPulse//Campus Calendar//EN',
+    'PRODID:-//Uneventful//Campus Calendar//EN',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
   ];
@@ -63,7 +63,7 @@ export function createIcal(rsvps: MyRsvp[], createdAt = new Date()): string {
     const title = rsvp.status === 'WAITLISTED' ? `[Waitlist] ${event.title}` : event.title;
     lines.push(
       'BEGIN:VEVENT',
-      `UID:${rsvp.id}@campuspulse`,
+      `UID:${rsvp.id}@uneventful`,
       `DTSTAMP:${toUtcDate(createdAt.toISOString())}`,
       `DTSTART:${toUtcDate(event.startAt)}`,
       `DTEND:${toUtcDate(event.endAt)}`,

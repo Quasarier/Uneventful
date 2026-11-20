@@ -35,14 +35,14 @@ export function AppShell({ children }: Readonly<{ children: React.ReactNode }>) 
       </a>
       <header className="border-b border-forest/10 bg-white">
         <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
-          <Link aria-label="CampusPulse home" className="flex items-center gap-3" href="/events">
+          <Link aria-label="Uneventful home" className="flex items-center gap-3" href="/events">
             <span
               aria-hidden="true"
               className="grid size-10 place-items-center rounded-2xl bg-forest text-mint"
             >
               <PulseMark />
             </span>
-            <span className="font-display text-xl font-black tracking-tight">CampusPulse</span>
+            <span className="font-display text-xl font-black tracking-tight">Uneventful</span>
           </Link>
           <nav
             aria-label="Primary navigation"

@@ -127,7 +127,7 @@ test('serves an installable manifest and a service worker with no API caching', 
   expect(manifestResponse.ok()).toBe(true);
   const manifest: unknown = await manifestResponse.json();
   expect(manifest).toMatchObject({
-    name: 'CampusPulse',
+    name: 'Uneventful',
     display: 'standalone',
     start_url: '/events',
   });
