@@ -36,6 +36,7 @@
   },
   "pnpm": {
     "overrides": {
+      "effect": "3.22.5",
       "postcss": "^8.5.18"
     }
   },
