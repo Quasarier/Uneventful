@@ -1,0 +1,28 @@
+body {
+  background: #f6f7f1;
+  color: #12231f;
+  font:
+    1rem/1.6 system-ui,
+    sans-serif;
+  margin: 0;
+  padding: 3rem 1.25rem;
+}
+
+main {
+  margin: 12vh auto 0;
+  max-width: 34rem;
+}
+
+h1 {
+  color: #123d35;
+}
+
+a {
+  color: #123d35;
+  font-weight: 700;
+}
+
+a:focus-visible {
+  outline: 3px solid #b53b28;
+  outline-offset: 3px;
+}

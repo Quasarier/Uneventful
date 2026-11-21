@@ -1,6 +1,6 @@
 const CACHE_NAME = 'uneventful-static-v2';
 const OFFLINE_URL = '/offline.html';
-const PRECACHE_URLS = [OFFLINE_URL, '/icons/icon.svg'];
+const PRECACHE_URLS = [OFFLINE_URL, '/offline.css', '/icons/icon.svg'];
 
 async function precachePublicAsset(cache, path) {
   const request = new Request(new URL(path, self.location.origin), {
@@ -81,7 +81,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  if (url.pathname.startsWith('/icons/')) {
+  if (url.pathname === '/offline.css' || url.pathname.startsWith('/icons/')) {
     event.respondWith(
       caches
         .open(CACHE_NAME)

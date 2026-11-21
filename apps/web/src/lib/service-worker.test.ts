@@ -75,7 +75,7 @@ function extendableEvent(properties: Partial<WorkerEvent> = {}) {
 }
 
 describe('service worker cache policy', () => {
-  it('precaches only the offline page and public static icon', async () => {
+  it('precaches the offline page, its stylesheet, and the public static icon', async () => {
     const worker = createWorker();
     const event = extendableEvent();
 
@@ -84,9 +84,10 @@ describe('service worker cache policy', () => {
 
     expect(worker.cacheWrites.map(({ path }) => path).sort()).toEqual([
       '/icons/icon.svg',
+      '/offline.css',
       '/offline.html',
     ]);
-    expect(worker.fetchAsset).toHaveBeenCalledTimes(2);
+    expect(worker.fetchAsset).toHaveBeenCalledTimes(3);
     expect(worker.self.skipWaiting).toHaveBeenCalledOnce();
   });
 
@@ -96,7 +97,7 @@ describe('service worker cache policy', () => {
       .mockImplementation(async (request) =>
         new URL(request.url).pathname === '/offline.html'
           ? new Response('offline', { headers: { 'Set-Cookie': 'session=secret' } })
-          : new Response('icon', { headers: { 'Cache-Control': 'private, no-store' } }),
+          : new Response('asset', { headers: { 'Cache-Control': 'private, no-store' } }),
       );
     const worker = createWorker(fetchAsset);
     const event = extendableEvent();
@@ -105,6 +106,23 @@ describe('service worker cache policy', () => {
     await event.pending();
 
     expect(worker.cacheWrites).toEqual([]);
+  });
+
+  it('serves the precached offline stylesheet while offline', async () => {
+    const cachedStylesheet = new Response('body { color: black; }');
+    const worker = createWorker();
+    worker.cache.match.mockResolvedValue(cachedStylesheet);
+    const event = extendableEvent({
+      request: new Request('https://uneventful.test/offline.css'),
+    });
+
+    worker.handlers.get('fetch')?.(event.event);
+    const response = event.response();
+    if (!response) {
+      throw new Error('The offline stylesheet request should be handled by the service worker.');
+    }
+
+    await expect(response).resolves.toBe(cachedStylesheet);
   });
 
   it('bypasses authenticated and API requests, including Set-Cookie responses', async () => {
