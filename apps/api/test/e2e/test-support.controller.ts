@@ -11,13 +11,16 @@ import {
   Res,
   Header,
   OnModuleDestroy,
+  BadRequestException,
 } from '@nestjs/common';
+import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { AuthService } from '../../src/auth/auth.service';
 import { Public } from '../../src/auth/auth.decorators';
 import { PrismaService } from '../../src/database/prisma.service';
 import type { Response } from 'express';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
-import { E2eSessionDto } from './test-support.dto';
+import { E2eImageUploadDto, E2eSessionDto } from './test-support.dto';
+import { MAX_EVENT_IMAGE_SIZE } from '../../src/events/event-image.constants';
 
 const REFRESH_COOKIE = '__Secure-uneventful_refresh';
 const REFRESH_COOKIE_PATH = '/api/v1/auth';
@@ -135,7 +138,12 @@ export class E2eTestSupportController implements OnModuleDestroy {
   ): Promise<void> {
     this.assertTestSecret(secret);
     const fixture = this.getFixture(fixtureId);
-    const userId = fixture.userIds[body.user];
+    const userId =
+      body.user === 'organizer'
+        ? fixture.organizerId
+        : body.user === 'admin'
+          ? fixture.adminId
+          : fixture.userIds[body.user];
     const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
     const session = await this.auth.completeGoogleLogin({
       googleSubject: user.googleSubject,
@@ -155,6 +163,72 @@ export class E2eTestSupportController implements OnModuleDestroy {
       })
       .status(HttpStatus.NO_CONTENT)
       .send();
+  }
+
+  @Public()
+  @Post('fixtures/:fixtureId/image')
+  @Header('Cache-Control', 'no-store')
+  async uploadImage(
+    @Headers('x-uneventful-e2e-secret') secret: string | undefined,
+    @Param('fixtureId', ParseUUIDPipe) fixtureId: string,
+    @Body() body: E2eImageUploadDto,
+    @Res() response: Response,
+  ): Promise<void> {
+    this.assertTestSecret(secret);
+    const fixture = this.getFixture(fixtureId);
+    const event = await this.prisma.event.findUnique({
+      where: { id: fixture.eventId },
+      select: {
+        pendingImageKey: true,
+        pendingImageExpiresAt: true,
+        pendingImageOwnerId: true,
+      },
+    });
+    if (
+      !event?.pendingImageKey ||
+      event.pendingImageOwnerId !== fixture.organizerId ||
+      !event.pendingImageExpiresAt ||
+      event.pendingImageExpiresAt <= new Date()
+    ) {
+      throw new NotFoundException();
+    }
+
+    const bytes = Buffer.from(body.imageBase64, 'base64');
+    if (
+      bytes.length < 1 ||
+      bytes.length > MAX_EVENT_IMAGE_SIZE ||
+      bytes.toString('base64') !== body.imageBase64
+    ) {
+      throw new BadRequestException('The E2E image fixture is invalid.');
+    }
+
+    const endpoint = process.env.OBJECT_STORAGE_ENDPOINT;
+    const accessKey = process.env.AWS_ACCESS_KEY_ID;
+    const secretKey = process.env.AWS_SECRET_ACCESS_KEY;
+    if (!endpoint || !accessKey || !secretKey) {
+      throw new Error('E2E object storage endpoint and credentials are required.');
+    }
+    const client = new S3Client({
+      region: 'us-east-1',
+      endpoint,
+      forcePathStyle: true,
+      credentials: { accessKeyId: accessKey, secretAccessKey: secretKey },
+    });
+    try {
+      await client.send(
+        new PutObjectCommand({
+          Bucket: 'uneventful-e2e-assets',
+          Key: event.pendingImageKey,
+          Body: bytes,
+          ContentLength: bytes.length,
+          ContentType: 'image/png',
+        }),
+      );
+    } finally {
+      client.destroy();
+    }
+
+    response.status(HttpStatus.NO_CONTENT).send();
   }
 
   @Public()
@@ -221,7 +295,16 @@ export class E2eTestSupportController implements OnModuleDestroy {
       await transaction.clubMembership.deleteMany({ where: { clubId: fixture.clubId } });
       await transaction.club.delete({ where: { id: fixture.clubId } });
       await transaction.eventCategory.delete({ where: { id: fixture.categoryId } });
-      await transaction.user.deleteMany({ where: { id: { in: userIds } } });
+      const auditActors = await transaction.auditLog.findMany({
+        where: { actorId: { in: userIds } },
+        select: { actorId: true },
+      });
+      // Append-only audit records retain their actor FK, so keep those fixture users.
+      const retainedUserIds = new Set(
+        auditActors.flatMap(({ actorId }) => (actorId ? [actorId] : [])),
+      );
+      const deletableUserIds = userIds.filter((userId) => !retainedUserIds.has(userId));
+      await transaction.user.deleteMany({ where: { id: { in: deletableUserIds } } });
     });
   }
 

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/components/auth-provider';
+import { EventImage } from '@/components/event-image';
 import { createApiClient, errorMessage } from '@/lib/api-client';
 import { formatEventDate, type EventItem } from '@/lib/event-format';
 
@@ -179,6 +180,13 @@ export function EventDetail({ eventId }: Readonly<{ eventId: string }>) {
               ? `${rsvp.goingCount} of ${event.capacity} spots taken`
               : `${event.capacity} spots`}
           </p>
+        )}
+        {event.hasImage && (
+          <EventImage
+            accessToken={accessToken}
+            alt={`Event image for ${event.title}`}
+            eventId={eventId}
+          />
         )}
       </header>
 
