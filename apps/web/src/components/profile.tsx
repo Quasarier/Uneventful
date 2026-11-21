@@ -84,13 +84,13 @@ export function Profile() {
         </div>
         <dl className="grid gap-5 pt-6 sm:grid-cols-2">
           <div>
-            <dt className="text-xs font-bold uppercase tracking-wider text-ink/60">
+            <dt className="text-xs font-bold uppercase tracking-wider text-ink/70">
               University email
             </dt>
             <dd className="mt-1 break-all font-semibold">{profile.email}</dd>
           </div>
           <div>
-            <dt className="text-xs font-bold uppercase tracking-wider text-ink/60">Account role</dt>
+            <dt className="text-xs font-bold uppercase tracking-wider text-ink/70">Account role</dt>
             <dd className="mt-1 font-semibold">{profile.role}</dd>
           </div>
         </dl>

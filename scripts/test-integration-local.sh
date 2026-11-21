@@ -188,4 +188,9 @@ run_pnpm --filter @uneventful/api db:deploy
 echo "Running API PostgreSQL and Redis integration tests..."
 run_pnpm --filter @uneventful/api test:integration
 
+if [ "${RUN_E2E:-0}" = "1" ]; then
+  echo "Running the full Playwright suite against the disposable API, PostgreSQL, and Redis..."
+  run_pnpm --filter @uneventful/web test:e2e
+fi
+
 echo "Integration tests passed; disposable containers will now be removed."

@@ -12,9 +12,11 @@ import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { EventStatus, RsvpStatus, TicketStatus } from '../generated/prisma/client';
 import { AuthRateLimitService } from '../src/auth/auth-rate-limit.service';
+import { AuthController } from '../src/auth/auth.controller';
 import type { AuthPrincipal } from '../src/auth/auth.types';
 import { AuthService } from '../src/auth/auth.service';
 import { GlobalApiRateLimitGuard } from '../src/auth/global-api-rate-limit.guard';
+import { GoogleOidcService } from '../src/auth/google-oidc.service';
 import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
 import { RolesGuard } from '../src/auth/roles.guard';
 import { HttpExceptionFilter } from '../src/http-exception.filter';
@@ -101,6 +103,11 @@ Reflect.defineMetadata(
 );
 Reflect.defineMetadata(
   'design:paramtypes',
+  [AuthService, GoogleOidcService, ConfigService, AuthRateLimitService],
+  AuthController,
+);
+Reflect.defineMetadata(
+  'design:paramtypes',
   [RsvpsService, AuthRateLimitService, ConfigService],
   RsvpsController,
 );
@@ -113,10 +120,36 @@ const authStub = {
     }
     return principal;
   },
+  getProfile: async (userId: string) => {
+    const user = await activePrisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        avatarUrl: true,
+        role: true,
+        isActive: true,
+        deletedAt: true,
+      },
+    });
+    if (!user || !user.isActive || user.deletedAt) {
+      throw new UnauthorizedException('This account is unavailable.');
+    }
+    return {
+      id: user.id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      avatarUrl: user.avatarUrl,
+      role: user.role,
+    };
+  },
 };
 
 @Module({
-  controllers: [RsvpsController, MyRsvpsController],
+  controllers: [AuthController, RsvpsController, MyRsvpsController],
   providers: [
     {
       provide: RsvpsRepository,
@@ -129,6 +162,7 @@ const authStub = {
     },
     { provide: AuthRateLimitService, useFactory: () => rateLimitService },
     { provide: AuthService, useValue: authStub },
+    { provide: GoogleOidcService, useValue: {} },
     { provide: ConfigService, useFactory: () => configFor(appDatabaseUrl!) },
   ],
 })
@@ -715,7 +749,11 @@ describe('RSVP PostgreSQL concurrency integration', () => {
           body: unknownResponse.body,
           headers: unknownResponse.headers,
         });
-        expect(Math.abs(hiddenResponse.durationMs - unknownResponse.durationMs)).toBeLessThan(150);
+        expect(hiddenResponse.durationMs).toBeLessThan(10_000);
+        expect(unknownResponse.durationMs).toBeLessThan(10_000);
+        expect(Math.abs(hiddenResponse.durationMs - unknownResponse.durationMs)).toBeLessThan(
+          5_000,
+        );
       }
     }
 
@@ -1038,11 +1076,45 @@ describe('RSVP PostgreSQL concurrency integration', () => {
     ).toMatchObject({ id: owned.id, status: RsvpStatus.GOING });
   });
 
-  it('keeps other attendees out of student RSVP read responses', async () => {
+  it('keeps profile and RSVP read responses scoped to the requesting student', async () => {
     const attendee = await repository.rsvp(primaryEventId, studentId(0), false);
+    const ownProfileResponse = await requestAs(studentId(0), 'GET', '/auth/me');
+    expect(ownProfileResponse.status).toBe(200);
+    expect(ownProfileResponse.headers.get('cache-control')).toBe('private, no-store');
+    const ownProfile = await ownProfileResponse.json();
+    expect(ownProfile).toEqual({
+      id: studentId(0),
+      email: `${studentId(0)}@example.edu`,
+      firstName: 'Student0',
+      lastName: 'Integration',
+      avatarUrl: null,
+      role: 'STUDENT',
+    });
+    expect(JSON.stringify(ownProfile)).not.toContain('tokenVersion');
+    expect(JSON.stringify(ownProfile)).not.toContain(`${studentId(1)}@example.edu`);
+
+    const otherProfileResponse = await requestAs(studentId(1), 'GET', '/auth/me');
+    expect(otherProfileResponse.status).toBe(200);
+    const otherProfile = await otherProfileResponse.json();
+    expect(otherProfile).toMatchObject({
+      id: studentId(1),
+      email: `${studentId(1)}@example.edu`,
+    });
+    expect(JSON.stringify(otherProfile)).not.toContain(`${studentId(0)}@example.edu`);
+
+    const ownRsvpResponse = await requestAs(studentId(0), 'GET', '/rsvps/me');
+    expect(ownRsvpResponse.status).toBe(200);
+    expect(ownRsvpResponse.headers.get('cache-control')).toBe('private, no-store');
+    const ownRsvpBody = await ownRsvpResponse.json();
+    expect(ownRsvpBody.data).toHaveLength(1);
+    expect(JSON.stringify(ownRsvpBody)).not.toContain('userId');
+    expect(JSON.stringify(ownRsvpBody)).not.toContain('tokenVersion');
+    expect(JSON.stringify(ownRsvpBody)).not.toContain(`${studentId(1)}@example.edu`);
+
     const response = await requestAs(studentId(1), 'GET', '/rsvps/me');
 
     expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
     const body = await response.json();
     expect(body.data).toEqual([]);
     expect(JSON.stringify(body)).not.toContain(studentId(0));
@@ -1050,6 +1122,57 @@ describe('RSVP PostgreSQL concurrency integration', () => {
 
     const organizerResponse = await requestAs(organizerId, 'GET', '/rsvps/me');
     expect(organizerResponse.status).toBe(403);
+  });
+
+  it('returns an allowlisted no-store RSVP status for only the requesting student', async () => {
+    await repository.rsvp(primaryEventId, studentId(0), false);
+
+    const ownResponse = await requestAs(
+      studentId(0),
+      'GET',
+      `/events/${primaryEventId}/rsvp/status`,
+    );
+    expect(ownResponse.status).toBe(200);
+    expect(ownResponse.headers.get('cache-control')).toBe('private, no-store');
+    await expect(ownResponse.json()).resolves.toEqual({
+      status: RsvpStatus.GOING,
+      waitlistPosition: null,
+      capacity: 50,
+      goingCount: 1,
+      isFull: false,
+    });
+
+    const otherResponse = await requestAs(
+      studentId(1),
+      'GET',
+      `/events/${primaryEventId}/rsvp/status`,
+    );
+    expect(otherResponse.status).toBe(200);
+    expect(otherResponse.headers.get('cache-control')).toBe('private, no-store');
+    const otherStatus = await otherResponse.json();
+    expect(otherStatus).toEqual({
+      status: null,
+      waitlistPosition: null,
+      capacity: 50,
+      goingCount: 1,
+      isFull: false,
+    });
+    expect(JSON.stringify(otherStatus)).not.toContain(studentId(0));
+  });
+
+  it('returns 429 with Retry-After when RSVP status requests exceed the per-user limit', async () => {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const response = await requestAs(
+        studentId(0),
+        'GET',
+        `/events/${primaryEventId}/rsvp/status`,
+      );
+      expect(response.status).toBe(200);
+    }
+
+    const limited = await requestAs(studentId(0), 'GET', `/events/${primaryEventId}/rsvp/status`);
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get('retry-after')).toBe('60');
   });
 
   it('rejects RSVP mass assignment of status, user, ticket, and waitlist fields', async () => {

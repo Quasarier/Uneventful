@@ -48,10 +48,41 @@ describe('createIcal', () => {
       event: { ...rsvp.event, title: 'Café '.repeat(30) },
     };
     const calendar = createIcal([longRsvp]);
-    const summaryLine = calendar.split('\r\n').find((line) => line.startsWith('SUMMARY:'));
+    const physicalLines = calendar.trimEnd().split('\r\n');
+    const summaryLine = physicalLines.find((line) => line.startsWith('SUMMARY:'));
 
     expect(calendar).toContain('SUMMARY:[Waitlist] Café');
     expect(summaryLine).toBeDefined();
-    expect(new TextEncoder().encode(summaryLine ?? '').length).toBeLessThanOrEqual(75);
+    for (const line of physicalLines) {
+      expect(new TextEncoder().encode(line).length).toBeLessThanOrEqual(75);
+    }
+    expect(physicalLines.some((line) => line.startsWith(' '))).toBe(true);
+  });
+
+  it('escapes hostile delimiters and line breaks so event text cannot inject calendar properties', () => {
+    const hostileRsvp: MyRsvp = {
+      ...rsvp,
+      event: {
+        ...rsvp.event,
+        title: 'Title\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nX-ATTACK:1,;\\tail',
+        description: 'Description\nEND:VCALENDAR\rX-ATTACK:2,;\\tail',
+      },
+    };
+    const calendar = createIcal([hostileRsvp]);
+    const physicalLines = calendar.trimEnd().split('\r\n');
+    const unfolded = calendar.replace(/\r\n /g, '');
+
+    expect(physicalLines.filter((line) => line === 'BEGIN:VEVENT')).toHaveLength(1);
+    expect(physicalLines.filter((line) => line === 'END:VEVENT')).toHaveLength(1);
+    expect(physicalLines.filter((line) => line === 'END:VCALENDAR')).toHaveLength(1);
+    expect(unfolded).toContain(
+      'SUMMARY:Title\\nEND:VEVENT\\nBEGIN:VEVENT\\nX-ATTACK:1\\,\\;\\\\tail',
+    );
+    expect(unfolded).toContain(
+      'DESCRIPTION:Description\\nEND:VCALENDAR\\nX-ATTACK:2\\,\\;\\\\tail',
+    );
+    for (const line of physicalLines) {
+      expect(new TextEncoder().encode(line).length).toBeLessThanOrEqual(75);
+    }
   });
 });

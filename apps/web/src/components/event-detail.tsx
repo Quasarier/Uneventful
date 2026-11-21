@@ -249,7 +249,7 @@ export function EventDetail({ eventId }: Readonly<{ eventId: string }>) {
               {error}
             </p>
           )}
-          <p className="mt-4 text-xs leading-5 text-ink/60">
+          <p className="mt-4 text-xs leading-5 text-ink/70">
             Your ticket will be available in My tickets after your RSVP is confirmed.
           </p>
         </aside>

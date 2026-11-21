@@ -79,6 +79,9 @@ jobs:
           MIGRATION_DATABASE_URL: postgresql://uneventful_migrator:test-migrator@localhost:5432/uneventful_ci?schema=public
           NODE_ENV: test
 
+      - name: Format check
+        run: pnpm format:check
+
       - name: Verify constraints and application-role privileges
         run: pnpm --filter @uneventful/api exec prisma db execute --file prisma/verify-constraints.sql
         env:
@@ -125,8 +128,11 @@ jobs:
       - name: Full Playwright end-to-end suite
         run: pnpm --filter @uneventful/web test:e2e
         env:
+          DATABASE_URL: postgresql://uneventful_app:test-app@localhost:5432/uneventful_ci?schema=public
+          REDIS_URL: redis://localhost:6379
           NEXT_PUBLIC_WEB_ORIGIN: http://localhost:3000
           NEXT_PUBLIC_API_BASE_URL: http://localhost:3001/api/v1
+          NODE_ENV: test
 
       - name: Full API PostgreSQL and Redis integration suite
         shell: bash
@@ -167,7 +173,7 @@ jobs:
           ' "$results"
 
           # Raise this threshold whenever integration tests are added.
-          minimum_test_count=56
+          minimum_test_count=59
           if (( test_count < minimum_test_count )); then
             echo "The API integration suite ran $test_count tests; minimum is $minimum_test_count." >&2
             exit 1
@@ -184,6 +190,28 @@ jobs:
         env:
           NEXT_PUBLIC_WEB_ORIGIN: http://localhost:3000
           NEXT_PUBLIC_API_BASE_URL: http://localhost:3001/api/v1
+
+      - name: Verify test auth bypass is excluded from production API build
+        shell: bash
+        run: |
+          if grep -R -n '__test/e2e' apps/api/dist; then
+            echo "Test-only E2E routes were included in the production API build." >&2
+            exit 1
+          fi
+
+      - name: Verify production API refuses the E2E auth-bypass flag
+        shell: bash
+        run: |
+          set +e
+          output="$(env NODE_ENV=production E2E_TEST_AUTH_BYPASS=1 pnpm --filter @uneventful/api start 2>&1)"
+          start_exit=$?
+          set -e
+          if [[ "$start_exit" -eq 0 ]] || ! grep -Fq 'E2E_TEST_AUTH_BYPASS is forbidden in production.' <<<"$output"; then
+            echo "Production API did not refuse the E2E auth-bypass flag for the expected reason." >&2
+            printf '%s\n' "$output" >&2
+            exit 1
+          fi
+          echo "Production API refused startup with the E2E auth-bypass flag."
 
   gitleaks:
     name: gitleaks

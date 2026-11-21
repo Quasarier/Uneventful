@@ -31,6 +31,25 @@ interface AuthContextValue {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+const AUTH_CHANNEL_NAME = 'uneventful-auth';
+
+async function clearApplicationCaches(): Promise<void> {
+  if (typeof window === 'undefined' || !('caches' in window)) {
+    return;
+  }
+
+  const cacheNames = await window.caches.keys();
+  await Promise.all(
+    cacheNames
+      .filter((name) => name.startsWith('uneventful-'))
+      .map((name) => window.caches.delete(name)),
+  );
+  window.navigator.serviceWorker?.controller?.postMessage({ type: 'uneventful:logout' });
+}
+
+function isLogoutMessage(value: unknown): boolean {
+  return typeof value === 'object' && value !== null && 'type' in value && value.type === 'logout';
+}
 
 export function AuthProvider({ children }: Readonly<{ children: React.ReactNode }>) {
   const [accessToken, setAccessToken] = useState<string | null>(null);
@@ -39,6 +58,7 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
   const accessTokenRef = useRef<string | null>(null);
   const expiresAtRef = useRef(0);
   const refreshPromiseRef = useRef<Promise<boolean> | null>(null);
+  const logoutChannelRef = useRef<BroadcastChannel | null>(null);
 
   const acceptSession = useCallback((session: ApiSession) => {
     const nextExpiry = Date.now() + session.expiresIn * 1000;
@@ -64,7 +84,7 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
       return refreshPromiseRef.current;
     }
 
-    const refresh = (async () => {
+    const refreshSession = async (): Promise<boolean> => {
       try {
         const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
           method: 'POST',
@@ -86,6 +106,12 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
       } finally {
         refreshPromiseRef.current = null;
       }
+    };
+    const refresh = (async () => {
+      if (typeof navigator === 'undefined' || !navigator.locks) {
+        return refreshSession();
+      }
+      return await navigator.locks.request('uneventful-auth-refresh', refreshSession);
     })();
 
     refreshPromiseRef.current = refresh;
@@ -103,6 +129,35 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
       throw new Error('Sign-out could not be completed. Please try again.');
     }
     clearSession();
+    try {
+      await clearApplicationCaches();
+    } finally {
+      logoutChannelRef.current?.postMessage({ type: 'logout' });
+    }
+  }, [clearSession]);
+
+  useEffect(() => {
+    if (typeof BroadcastChannel === 'undefined') {
+      return;
+    }
+
+    const channel = new BroadcastChannel(AUTH_CHANNEL_NAME);
+    logoutChannelRef.current = channel;
+    channel.onmessage = (event: MessageEvent<unknown>) => {
+      if (isLogoutMessage(event.data)) {
+        clearSession();
+        void clearApplicationCaches().catch(() => {
+          console.error('Unable to clear application caches after sign-out in another tab.');
+        });
+      }
+    };
+
+    return () => {
+      channel.close();
+      if (logoutChannelRef.current === channel) {
+        logoutChannelRef.current = null;
+      }
+    };
   }, [clearSession]);
 
   useEffect(() => {

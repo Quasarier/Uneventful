@@ -5,12 +5,13 @@ import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
 import type { Environment } from './config/environment';
-import { AppModule } from './app.module';
+import { assertE2eAuthBypassNotEnabledInProduction } from './config/e2e-auth-bypass.guard';
 import { HttpExceptionFilter } from './http-exception.filter';
 import { createCorsOptions, helmetOptions } from './http-security';
 import { configureRequestBodyLimits } from './request-body-limits';
 
 async function bootstrap(): Promise<void> {
+  const { AppModule } = await import('./app.module');
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bufferLogs: true,
     bodyParser: false,
@@ -38,4 +39,5 @@ async function bootstrap(): Promise<void> {
   await app.listen(config.get('PORT', { infer: true }), '0.0.0.0');
 }
 
+assertE2eAuthBypassNotEnabledInProduction(process.env);
 void bootstrap();

@@ -123,6 +123,25 @@ export class AuthRepository {
     });
   }
 
+  async hasActiveRefreshTokenFamily(
+    userId: string,
+    familyId: string,
+    tokenVersion: number,
+    now: Date,
+  ): Promise<boolean> {
+    const activeToken = await this.prisma.refreshToken.findFirst({
+      where: {
+        userId,
+        familyId,
+        tokenVersion,
+        revokedAt: null,
+        expiresAt: { gt: now },
+      },
+      select: { id: true },
+    });
+    return activeToken !== null;
+  }
+
   createRefreshToken(input: {
     id: string;
     userId: string;

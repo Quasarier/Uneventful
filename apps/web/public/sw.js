@@ -1,13 +1,36 @@
-const CACHE_NAME = 'uneventful-static-v1';
+const CACHE_NAME = 'uneventful-static-v2';
 const OFFLINE_URL = '/offline.html';
 const PRECACHE_URLS = [OFFLINE_URL, '/icons/icon.svg'];
 
+async function precachePublicAsset(cache, path) {
+  const request = new Request(new URL(path, self.location.origin), {
+    credentials: 'omit',
+    method: 'GET',
+  });
+  if (request.headers.has('authorization')) {
+    return;
+  }
+
+  const response = await fetch(request);
+  if (
+    !response.ok ||
+    response.headers.has('set-cookie') ||
+    /\bno-store\b/i.test(response.headers.get('cache-control') || '')
+  ) {
+    return;
+  }
+  await cache.put(request, response.clone());
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches
-      .open(CACHE_NAME)
-      .then((cache) => cache.addAll(PRECACHE_URLS))
-      .then(() => self.skipWaiting()),
+    (async () => {
+      const cache = await caches.open(CACHE_NAME);
+      for (const path of PRECACHE_URLS) {
+        await precachePublicAsset(cache, path);
+      }
+      await self.skipWaiting();
+    })(),
   );
 });
 
@@ -26,12 +49,28 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+self.addEventListener('message', (event) => {
+  if (event.data?.type !== 'uneventful:logout') {
+    return;
+  }
+  event.waitUntil(
+    caches
+      .keys()
+      .then((keys) =>
+        Promise.all(
+          keys.filter((key) => key.startsWith('uneventful-')).map((key) => caches.delete(key)),
+        ),
+      ),
+  );
+});
+
 self.addEventListener('fetch', (event) => {
   const request = event.request;
   const url = new URL(request.url);
   if (
     request.method !== 'GET' ||
     url.origin !== self.location.origin ||
+    request.headers.has('authorization') ||
     url.pathname.startsWith('/api/')
   ) {
     return;

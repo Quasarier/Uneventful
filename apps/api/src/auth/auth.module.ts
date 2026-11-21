@@ -2,7 +2,6 @@ import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { DatabaseModule } from '../database/database.module';
 import { AuthRateLimitModule } from './auth-rate-limit.module';
-import { AuthRateLimitService } from './auth-rate-limit.service';
 import { AuthController } from './auth.controller';
 import { AuthRepository } from './auth.repository';
 import { AuthService } from './auth.service';
@@ -25,6 +24,6 @@ import { RolesGuard } from './roles.guard';
     { provide: APP_GUARD, useExisting: GlobalApiRateLimitGuard },
     { provide: APP_GUARD, useExisting: RolesGuard },
   ],
-  exports: [AuthService, AuthRateLimitService],
+  exports: [AuthService, AuthRateLimitModule],
 })
 export class AuthModule {}
