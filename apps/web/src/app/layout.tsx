@@ -3,6 +3,8 @@ import { AuthProvider } from '@/components/auth-provider';
 import { PwaRegistrar } from '@/components/pwa-registrar';
 import './globals.css';
 
+export const dynamic = 'force-dynamic';
+
 export const metadata: Metadata = {
   title: {
     default: 'Uneventful',
