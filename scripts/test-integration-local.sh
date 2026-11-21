@@ -23,10 +23,12 @@ fi
 RUN_ID="$(date +%s)-$$"
 POSTGRES_CONTAINER="uneventful-it-postgres-$RUN_ID"
 REDIS_CONTAINER="uneventful-it-redis-$RUN_ID"
+OBJECT_STORAGE_CONTAINER="uneventful-it-object-storage-$RUN_ID"
 
 cleanup() {
   status=$?
   trap - EXIT INT TERM
+  docker rm --force "$OBJECT_STORAGE_CONTAINER" >/dev/null 2>&1 || true
   docker rm --force "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
   docker rm --force "$REDIS_CONTAINER" >/dev/null 2>&1 || true
   exit "$status"
@@ -64,7 +66,7 @@ run_pnpm() {
   if [ "$PNPM_MODE" = "native" ]; then
     corepack pnpm "$@"
   else
-    export WSLENV="${WSLENV:+$WSLENV:}DATABASE_URL:MIGRATION_DATABASE_URL:REDIS_URL:TEST_DATABASE_URL:TEST_MIGRATION_DATABASE_URL:TEST_REDIS_URL:NODE_ENV"
+    export WSLENV="${WSLENV:+$WSLENV:}DATABASE_URL:MIGRATION_DATABASE_URL:REDIS_URL:TEST_DATABASE_URL:TEST_MIGRATION_DATABASE_URL:TEST_REDIS_URL:OBJECT_STORAGE_ENDPOINT:AWS_ACCESS_KEY_ID:AWS_SECRET_ACCESS_KEY:NODE_ENV"
     cmd.exe /d /s /c "corepack pnpm $*"
   fi
 }
@@ -76,7 +78,8 @@ for url_name in \
   REDIS_URL \
   TEST_DATABASE_URL \
   TEST_MIGRATION_DATABASE_URL \
-  TEST_REDIS_URL
+  TEST_REDIS_URL \
+  OBJECT_STORAGE_ENDPOINT
 do
   if [ -n "$(printenv "$url_name" 2>/dev/null || true)" ]; then
     validate_local_url "$url_name" "$(printenv "$url_name")"
@@ -94,9 +97,12 @@ BOOTSTRAP_PASSWORD="$("$NODE_BIN" -p "require('node:crypto').randomBytes(24).toS
 MIGRATOR_PASSWORD="$("$NODE_BIN" -p "require('node:crypto').randomBytes(24).toString('base64url')")"
 APP_PASSWORD="$("$NODE_BIN" -p "require('node:crypto').randomBytes(24).toString('base64url')")"
 REDIS_PASSWORD="$("$NODE_BIN" -p "require('node:crypto').randomBytes(24).toString('base64url')")"
+OBJECT_STORAGE_ACCESS_KEY="e2e$("$NODE_BIN" -p "require('node:crypto').randomBytes(12).toString('hex')")"
+OBJECT_STORAGE_SECRET_KEY="$("$NODE_BIN" -p "require('node:crypto').randomBytes(32).toString('hex')")"
 
 POSTGRES_IMAGE="postgres:17-alpine@sha256:d3244e8ce3f165ee3c93d9c4a4b1d0fe48b3a89e2287b717fdcbbde92d405065"
 REDIS_IMAGE="redis:7.4-alpine"
+OBJECT_STORAGE_IMAGE="ghcr.io/versity/versitygw@sha256:dd880fd85c3faba0411da8798d3f6f0827a779d962f257f3624b1fef76d56b7b"
 
 echo "Starting the disposable PostgreSQL 17 container..."
 docker run --detach --rm \
@@ -121,6 +127,23 @@ docker run --detach --rm \
   --health-retries 20 \
   "$REDIS_IMAGE" \
   redis-server --requirepass "$REDIS_PASSWORD" >/dev/null
+
+echo "Starting the disposable S3-compatible object-storage container..."
+MSYS_NO_PATHCONV=1 docker run --detach \
+  --name "$OBJECT_STORAGE_CONTAINER" \
+  --publish 127.0.0.1::7070 \
+  --env ROOT_ACCESS_KEY="$OBJECT_STORAGE_ACCESS_KEY" \
+  --env ROOT_SECRET_KEY="$OBJECT_STORAGE_SECRET_KEY" \
+  "$OBJECT_STORAGE_IMAGE" \
+  --port :7070 --health /health --quiet posix /tmp >/dev/null
+OBJECT_STORAGE_RUNNING="$(
+  docker inspect --format='{{.State.Running}}' "$OBJECT_STORAGE_CONTAINER" 2>/dev/null || true
+)"
+if [ "$OBJECT_STORAGE_RUNNING" != "true" ]; then
+  docker logs "$OBJECT_STORAGE_CONTAINER" >&2 || true
+  echo "The object-storage container exited during startup." >&2
+  exit 1
+fi
 
 wait_for_healthy() {
   local container="$1"
@@ -150,9 +173,10 @@ wait_for_healthy "$REDIS_CONTAINER" "Redis"
 
 POSTGRES_PORT="$(docker port "$POSTGRES_CONTAINER" 5432/tcp | awk -F: 'END { print $NF }')"
 REDIS_PORT="$(docker port "$REDIS_CONTAINER" 6379/tcp | awk -F: 'END { print $NF }')"
+OBJECT_STORAGE_PORT="$(docker port "$OBJECT_STORAGE_CONTAINER" 7070/tcp | awk -F: 'END { print $NF }')"
 
-if [ -z "$POSTGRES_PORT" ] || [ -z "$REDIS_PORT" ]; then
-  echo "Could not determine the temporary PostgreSQL and Redis host ports." >&2
+if [ -z "$POSTGRES_PORT" ] || [ -z "$REDIS_PORT" ] || [ -z "$OBJECT_STORAGE_PORT" ]; then
+  echo "Could not determine the temporary integration-service host ports." >&2
   exit 1
 fi
 
@@ -162,15 +186,38 @@ TEST_DATABASE_URL="$DATABASE_URL"
 TEST_MIGRATION_DATABASE_URL="$MIGRATION_DATABASE_URL"
 TEST_REDIS_URL="redis://:$REDIS_PASSWORD@127.0.0.1:$REDIS_PORT"
 REDIS_URL="$TEST_REDIS_URL"
+OBJECT_STORAGE_ENDPOINT="http://127.0.0.1:$OBJECT_STORAGE_PORT"
+AWS_ACCESS_KEY_ID="$OBJECT_STORAGE_ACCESS_KEY"
+AWS_SECRET_ACCESS_KEY="$OBJECT_STORAGE_SECRET_KEY"
 
 validate_local_url DATABASE_URL "$DATABASE_URL"
 validate_local_url MIGRATION_DATABASE_URL "$MIGRATION_DATABASE_URL"
 validate_local_url TEST_DATABASE_URL "$TEST_DATABASE_URL"
 validate_local_url TEST_MIGRATION_DATABASE_URL "$TEST_MIGRATION_DATABASE_URL"
 validate_local_url TEST_REDIS_URL "$TEST_REDIS_URL"
+validate_local_url OBJECT_STORAGE_ENDPOINT "$OBJECT_STORAGE_ENDPOINT"
+
+echo "Waiting for the S3-compatible object-storage endpoint..."
+storage_ready=0
+for ((attempt = 0; attempt < 60; attempt++)); do
+  if "$NODE_BIN" - "$OBJECT_STORAGE_ENDPOINT/health" <<'NODE'
+const [url] = process.argv.slice(2);
+fetch(url).then((response) => process.exit(response.ok ? 0 : 1), () => process.exit(1));
+NODE
+  then
+    storage_ready=1
+    break
+  fi
+  sleep 1
+done
+if [ "$storage_ready" != "1" ]; then
+  echo "The object-storage endpoint did not become ready." >&2
+  exit 1
+fi
 
 export DATABASE_URL MIGRATION_DATABASE_URL TEST_DATABASE_URL
 export TEST_MIGRATION_DATABASE_URL TEST_REDIS_URL REDIS_URL
+export OBJECT_STORAGE_ENDPOINT AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
 export NODE_ENV=test
 export UNEVENTFUL_MIGRATOR_DB_PASSWORD="$MIGRATOR_PASSWORD"
 export UNEVENTFUL_APP_DB_PASSWORD="$APP_PASSWORD"
