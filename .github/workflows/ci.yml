@@ -125,6 +125,55 @@ jobs:
       - name: Install Playwright Chromium
         run: pnpm --filter @uneventful/web exec playwright install --with-deps chromium
 
+      - name: Start disposable S3-compatible test storage
+        shell: bash
+        run: |
+          docker run --detach --rm \
+            --name uneventful-e2e-object-storage \
+            --publish 127.0.0.1:7070:7070 \
+            --env ROOT_ACCESS_KEY=uneventful-e2e-access \
+            --env ROOT_SECRET_KEY=uneventful-e2e-secret-for-tests \
+            ghcr.io/versity/versitygw@sha256:dd880fd85c3faba0411da8798d3f6f0827a779d962f257f3624b1fef76d56b7b \
+            --port :7070 --health /health --quiet posix /tmp
+          for attempt in {1..60}; do
+            if curl --fail --silent http://localhost:7070/health > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "The object-storage test service did not become ready." >&2
+          exit 1
+
+      - name: Verify Playwright test-count minimum
+        shell: bash
+        run: |
+          set -euo pipefail
+          results="$RUNNER_TEMP/playwright-test-list.json"
+          pnpm --filter @uneventful/web exec playwright test --list --reporter=json > "$results"
+          node -e '
+            const report = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+            const count = (suites) => suites.reduce(
+              (total, suite) => total + (suite.specs?.length ?? 0) + count(suite.suites ?? []),
+              0
+            );
+            const testCount = count(report.suites);
+            console.log(`Playwright test count: ${testCount}`);
+            const minimumTestCount = 22;
+            if (testCount < minimumTestCount) {
+              console.error(`Playwright suite ran ${testCount} tests; minimum is ${minimumTestCount}.`);
+              process.exit(1);
+            }
+          ' "$results"
+        env:
+          DATABASE_URL: postgresql://uneventful_app:test-app@localhost:5432/uneventful_ci?schema=public
+          REDIS_URL: redis://localhost:6379
+          NEXT_PUBLIC_WEB_ORIGIN: http://localhost:3000
+          NEXT_PUBLIC_API_BASE_URL: http://localhost:3001/api/v1
+          OBJECT_STORAGE_ENDPOINT: http://localhost:7070
+          AWS_ACCESS_KEY_ID: uneventful-e2e-access
+          AWS_SECRET_ACCESS_KEY: uneventful-e2e-secret-for-tests
+          NODE_ENV: test
+
       - name: Full Playwright end-to-end suite
         run: pnpm --filter @uneventful/web test:e2e
         env:
@@ -132,7 +181,14 @@ jobs:
           REDIS_URL: redis://localhost:6379
           NEXT_PUBLIC_WEB_ORIGIN: http://localhost:3000
           NEXT_PUBLIC_API_BASE_URL: http://localhost:3001/api/v1
+          OBJECT_STORAGE_ENDPOINT: http://localhost:7070
+          AWS_ACCESS_KEY_ID: uneventful-e2e-access
+          AWS_SECRET_ACCESS_KEY: uneventful-e2e-secret-for-tests
           NODE_ENV: test
+
+      - name: Stop disposable object-storage service
+        if: always()
+        run: docker rm --force uneventful-e2e-object-storage >/dev/null 2>&1 || true
 
       - name: Full API PostgreSQL and Redis integration suite
         shell: bash
@@ -333,3 +389,59 @@ jobs:
       actions: read
       contents: read
       security-events: write
+
+  zap-baseline:
+    name: zap-baseline (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.7.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --verify-store-integrity
+
+      - name: Build the web app
+        run: pnpm --filter @uneventful/web build
+        env:
+          NEXT_PUBLIC_WEB_ORIGIN: http://localhost:3000
+          NEXT_PUBLIC_API_BASE_URL: http://localhost:3001/api/v1
+
+      - name: Start the web app
+        run: |
+          pnpm --filter @uneventful/web start > "$RUNNER_TEMP/web.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/web.pid"
+          for attempt in {1..60}; do
+            if curl --fail --silent http://localhost:3000/login > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          cat "$RUNNER_TEMP/web.log"
+          echo "The web app did not become ready for the ZAP scan." >&2
+          exit 1
+        env:
+          NODE_ENV: production
+          NEXT_PUBLIC_WEB_ORIGIN: http://localhost:3000
+          NEXT_PUBLIC_API_BASE_URL: http://localhost:3001/api/v1
+
+      - name: Run OWASP ZAP baseline scan
+        uses: zaproxy/action-baseline@de8ad967d3548d44ef623df22cf95c3b0baf8b25
+        with:
+          docker_name: ghcr.io/zaproxy/zaproxy@sha256:9624669db72f54d86c4b46a7064518bd9bf79d8c61a4c31befa9923489f328af
+          target: http://localhost:3000/login
+          allow_issue_writing: false
+          fail_action: false
