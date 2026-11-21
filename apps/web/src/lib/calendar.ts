@@ -1,7 +1,7 @@
 import type { MyRsvp } from './event-format';
 
 function escapeText(value: string): string {
-  return value
+  const safeText = value
     .replace(/<[^>]*>/g, ' ')
     .replace(/&nbsp;/gi, ' ')
     .replace(/&amp;/gi, '&')
@@ -12,7 +12,12 @@ function escapeText(value: string): string {
     .replace(/\\/g, '\\\\')
     .replace(/\r\n|\r|\n/g, '\\n')
     .replace(/;/g, '\\;')
-    .replace(/,/g, '\\,')
+    .replace(/,/g, '\\,');
+  return Array.from(safeText, (character) => {
+    const code = character.charCodeAt(0);
+    return (code < 0x20 && code !== 0x09) || code === 0x7f ? ' ' : character;
+  })
+    .join('')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -34,7 +39,7 @@ function foldLine(line: string): string {
     if (bytes + characterBytes > 75 && chunk) {
       chunks.push(chunk);
       chunk = character;
-      bytes = characterBytes;
+      bytes = characterBytes + 1;
     } else {
       chunk += character;
       bytes += characterBytes;

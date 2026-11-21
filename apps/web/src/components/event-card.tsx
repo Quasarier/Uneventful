@@ -8,7 +8,7 @@ export function EventCard({ event }: Readonly<{ event: EventItem }>) {
         <span className="rounded-full bg-mint/60 px-3 py-1 text-xs font-bold text-forest">
           {event.category.name}
         </span>
-        <span className="text-xs font-medium text-ink/60">{event.club.name}</span>
+        <span className="text-xs font-medium text-ink/70">{event.club.name}</span>
       </div>
       <h2 className="font-display mt-4 text-2xl font-bold leading-tight">
         <Link

@@ -37,7 +37,10 @@
   "pnpm": {
     "overrides": {
       "effect": "3.22.5",
-      "postcss": "^8.5.18"
+      "axe-core": "4.14.0",
+      "glob@13.0.6": "14.0.2",
+      "minimatch@10.2.6": "11.0.1",
+      "postcss": "8.5.32"
     }
   },
   "lint-staged": {

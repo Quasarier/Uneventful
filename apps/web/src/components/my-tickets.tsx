@@ -64,6 +64,10 @@ export function MyTickets() {
         <p className="mt-4 text-base leading-7 text-ink/70">
           Open a ticket QR code when you’re ready to check in. Codes stay in this page session only.
         </p>
+        <p className="mt-2 text-sm leading-6 text-ink/70">
+          QR codes currently encode a random one-time API bearer token, not an event or RSVP ID.
+          This temporary format will be replaced by signed tokens in Stage 7.
+        </p>
       </div>
       {loading && (
         <p aria-live="polite" className="py-8 font-semibold text-forest" role="status">

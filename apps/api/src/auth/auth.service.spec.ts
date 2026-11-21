@@ -59,6 +59,7 @@ describe('AuthService', () => {
     } as ConfigService<Environment, true>;
     repository = {
       findUserState: vi.fn(),
+      hasActiveRefreshTokenFamily: vi.fn().mockResolvedValue(true),
       findUserProfile: vi.fn(),
       findRefreshByHash: vi.fn(),
       createOrUpdateGoogleUser: vi.fn(),
@@ -259,6 +260,33 @@ describe('AuthService', () => {
     });
   });
 
+  it('rejects a valid access token when its refresh-token family has been revoked', async () => {
+    vi.spyOn(repository, 'findUserState').mockResolvedValue({
+      id: userId,
+      role: 'STUDENT',
+      tokenVersion: 0,
+      isActive: true,
+      deletedAt: null,
+    });
+    vi.spyOn(repository, 'hasActiveRefreshTokenFamily').mockResolvedValue(false);
+    const token = await createAccessToken({
+      privateKey,
+      userId,
+      issuedAt: Math.floor(Date.now() / 1000),
+      expiresAt: Math.floor(Date.now() / 1000) + 900,
+    });
+
+    await expect(service.authenticateAccessToken(token)).rejects.toThrow(
+      'Access token is no longer valid.',
+    );
+    expect(repository.hasActiveRefreshTokenFamily).toHaveBeenCalledWith(
+      userId,
+      expect.any(String),
+      0,
+      expect.any(Date),
+    );
+  });
+
   it('verifies tokens signed by the configured previous key ID', async () => {
     const now = Math.floor(Date.now() / 1000);
     vi.spyOn(repository, 'findUserState').mockResolvedValue({
@@ -313,6 +341,7 @@ async function createAccessToken(input: {
   return new SignJWT({
     role: input.role ?? 'STUDENT',
     tokenVersion: input.tokenVersion ?? 0,
+    sid: randomUUID(),
   })
     .setProtectedHeader({
       alg: 'RS256',

@@ -239,6 +239,23 @@ describe('authentication database integration', () => {
     );
   });
 
+  it('invalidates only the logged-out device access token immediately', async () => {
+    const loggedOutSession = await createSessionForUser();
+    const otherDeviceSession = await createSessionForUser();
+
+    await authService.logout(loggedOutSession.refreshToken);
+
+    await expect(authService.authenticateAccessToken(loggedOutSession.accessToken)).rejects.toThrow(
+      'Access token is no longer valid.',
+    );
+    await expect(
+      authService.authenticateAccessToken(otherDeviceSession.accessToken),
+    ).resolves.toMatchObject({ id: userId, role: 'STUDENT' });
+    await expect(authService.refresh(loggedOutSession.refreshToken)).rejects.toThrow(
+      'Refresh token reuse detected.',
+    );
+  });
+
   async function createSessionForUser() {
     if (!userId) {
       throw new Error('Test user was not created.');

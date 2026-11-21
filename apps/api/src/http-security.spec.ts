@@ -11,6 +11,7 @@ describe('HTTP security configuration', () => {
     expect(options.origin).not.toContain('*');
     expect(options.credentials).toBe(true);
     expect(options.allowedHeaders).toContain('X-Uneventful-CSRF');
+    expect(options.methods).toContain('DELETE');
   });
 
   it('preserves the popup opener while adding Helmet security headers', async () => {

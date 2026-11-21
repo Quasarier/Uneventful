@@ -26,6 +26,7 @@ const accessClaimsSchema = z
     sub: z.string().uuid(),
     role: z.enum(['STUDENT', 'ORGANIZER', 'ADMIN']),
     tokenVersion: z.number().int().nonnegative(),
+    sid: z.string().uuid(),
     jti: z.string().uuid(),
     iss: z.string().url(),
     aud: z.union([z.string(), z.array(z.string())]),
@@ -150,7 +151,7 @@ export class AuthService implements OnModuleInit {
       throw new UnauthorizedException('Refresh token reuse detected.');
     }
 
-    return this.createSessionTokens(record.user, nextRefreshToken);
+    return this.createSessionTokens(record.user, nextRefreshToken, record.familyId);
   }
 
   async logout(rawRefreshToken: string | undefined): Promise<void> {
@@ -216,6 +217,15 @@ export class AuthService implements OnModuleInit {
       ) {
         throw new UnauthorizedException('Access token is no longer valid.');
       }
+      const sessionIsActive = await this.repository.hasActiveRefreshTokenFamily(
+        user.id,
+        claims.sid,
+        claims.tokenVersion,
+        new Date(),
+      );
+      if (!sessionIsActive) {
+        throw new UnauthorizedException('Access token is no longer valid.');
+      }
 
       return {
         id: user.id,
@@ -240,26 +250,29 @@ export class AuthService implements OnModuleInit {
   private async createSession(user: AuthUser): Promise<AuthSession> {
     const refreshToken = this.newRefreshToken();
     const now = new Date();
+    const familyId = randomUUID();
     await this.repository.createRefreshToken({
       id: randomUUID(),
       userId: user.id,
-      familyId: randomUUID(),
+      familyId,
       tokenHash: this.hashRefreshToken(refreshToken),
       expiresAt: this.getRefreshExpiry(now),
       tokenVersion: user.tokenVersion,
     });
 
-    return this.createSessionTokens(user, refreshToken);
+    return this.createSessionTokens(user, refreshToken, familyId);
   }
 
   private async createSessionTokens(
     user: Pick<AuthUser, 'id' | 'role' | 'tokenVersion'>,
     refreshToken: string,
+    familyId: string,
   ): Promise<AuthSession> {
     const now = Math.floor(Date.now() / 1000);
     const accessToken = await new SignJWT({
       role: user.role,
       tokenVersion: user.tokenVersion,
+      sid: familyId,
     })
       .setProtectedHeader({
         alg: 'RS256',
