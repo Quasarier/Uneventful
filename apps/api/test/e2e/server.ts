@@ -3,6 +3,7 @@ import { randomBytes, generateKeyPairSync } from 'node:crypto';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
+import { CreateBucketCommand, S3Client } from '@aws-sdk/client-s3';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
 import type { Environment } from '../../src/config/environment';
@@ -35,9 +36,31 @@ function setEphemeralTestCredentials(): void {
   process.env.PORT ??= '3001';
 }
 
+async function createTestBucket(): Promise<void> {
+  const endpoint = process.env.OBJECT_STORAGE_ENDPOINT;
+  const accessKey = process.env.AWS_ACCESS_KEY_ID;
+  const secretKey = process.env.AWS_SECRET_ACCESS_KEY;
+  if (!endpoint || !accessKey || !secretKey) {
+    throw new Error('E2E object storage endpoint and credentials are required.');
+  }
+
+  const client = new S3Client({
+    region: 'us-east-1',
+    endpoint,
+    forcePathStyle: true,
+    credentials: { accessKeyId: accessKey, secretAccessKey: secretKey },
+  });
+  try {
+    await client.send(new CreateBucketCommand({ Bucket: 'uneventful-e2e-assets' }));
+  } finally {
+    client.destroy();
+  }
+}
+
 async function bootstrap(): Promise<void> {
   assertE2eTestEnvironment(process.env);
   setEphemeralTestCredentials();
+  await createTestBucket();
   await installDecoratorMetadataForTsx();
   const { E2eTestSupportModule } = await import('./test-support.module');
 

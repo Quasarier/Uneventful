@@ -43,6 +43,7 @@ export async function mockStudentApi(
   page: Page,
   options: {
     event?: typeof testEvent;
+    profile?: typeof profile;
     rsvps?: unknown[];
   } = {},
 ): Promise<void> {
@@ -74,7 +75,7 @@ export async function mockStudentApi(
         status: 200,
         contentType: 'application/json',
         headers: corsHeaders,
-        body: JSON.stringify(profile),
+        body: JSON.stringify(options.profile ?? profile),
       });
       return;
     }

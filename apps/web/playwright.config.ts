@@ -7,10 +7,16 @@ const apiOrigin = new URL(apiBaseUrl).origin;
 const apiPort = new URL(apiBaseUrl).port || '3001';
 const databaseUrl = process.env.DATABASE_URL ?? process.env.TEST_DATABASE_URL;
 const redisUrl = process.env.REDIS_URL ?? process.env.TEST_REDIS_URL;
+const objectStorageEndpoint = process.env.OBJECT_STORAGE_ENDPOINT;
+const objectStorageAccessKey = process.env.AWS_ACCESS_KEY_ID;
+const objectStorageSecretKey = process.env.AWS_SECRET_ACCESS_KEY;
 const e2eSecret = process.env.E2E_TEST_AUTH_BYPASS_SECRET ?? randomBytes(32).toString('base64url');
 
 if (!databaseUrl || !redisUrl) {
   throw new Error('DATABASE_URL and REDIS_URL (or their TEST_ equivalents) are required for E2E.');
+}
+if (!objectStorageEndpoint || !objectStorageAccessKey || !objectStorageSecretKey) {
+  throw new Error('OBJECT_STORAGE_ENDPOINT and AWS S3 test credentials are required for E2E.');
 }
 process.env.E2E_TEST_AUTH_BYPASS_SECRET = e2eSecret;
 
@@ -33,16 +39,21 @@ export default defineConfig({
         E2E_TEST_AUTH_BYPASS: '1',
         E2E_TEST_AUTH_BYPASS_SECRET: e2eSecret,
         NODE_ENV: 'test',
+        OBJECT_STORAGE_ENDPOINT: objectStorageEndpoint,
+        AWS_ACCESS_KEY_ID: objectStorageAccessKey,
+        AWS_SECRET_ACCESS_KEY: objectStorageSecretKey,
         PORT: apiPort,
         REDIS_URL: redisUrl,
         WEB_ORIGIN: webOrigin,
       },
     },
     {
-      command: 'corepack pnpm --filter @uneventful/web dev',
+      command:
+        'corepack pnpm --filter @uneventful/web build && corepack pnpm --filter @uneventful/web start',
       url: webOrigin,
       reuseExistingServer: !process.env.CI,
       env: {
+        NODE_ENV: 'production',
         NEXT_PUBLIC_WEB_ORIGIN: webOrigin,
         NEXT_PUBLIC_API_BASE_URL: apiBaseUrl,
       },
