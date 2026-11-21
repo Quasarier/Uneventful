@@ -50,7 +50,8 @@ describe('EventsController image delivery rate limit', () => {
       rateLimit as unknown as AuthRateLimitService,
     );
 
-    await controller.getImage(makeRequest(), eventId, makeResponse());
+    const response = makeResponse();
+    await controller.getImage(makeRequest(), eventId, response);
 
     expect(rateLimit.consume).toHaveBeenNthCalledWith(
       1,
@@ -69,6 +70,9 @@ describe('EventsController image delivery rate limit', () => {
       expect.objectContaining({ exceeded: 'Too many image requests. Try again later.' }),
     );
     expect(events.getImage).toHaveBeenCalledWith(principal, eventId);
+    expect(response.set).toHaveBeenCalledWith(
+      expect.objectContaining({ 'Cross-Origin-Resource-Policy': 'cross-origin' }),
+    );
   });
 
   it('does not access image storage after a rate limit is exceeded', async () => {

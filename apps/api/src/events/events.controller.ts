@@ -139,6 +139,7 @@ export class EventsController {
         'Content-Disposition': `attachment; filename="event-image.${image.extension}"`,
         'X-Content-Type-Options': 'nosniff',
         'Cache-Control': 'private, no-store',
+        'Cross-Origin-Resource-Policy': 'cross-origin',
       })
       .send(image.body);
   }
