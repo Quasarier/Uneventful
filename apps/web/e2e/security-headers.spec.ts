@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test';
 import { mockStudentApi } from './mock-api';
 
-const pagePaths = ['/login', '/events', '/clubs', '/calendar', '/tickets', '/profile'];
+const scannerPath = '/events/45b7f5a1-4de0-4bfc-b3a0-918f89375c10/scanner';
+const pagePaths = ['/login', '/events', '/clubs', '/calendar', '/tickets', '/profile', scannerPath];
 
 test('sets security headers and a per-response nonce on main pages', async ({ page }) => {
   await mockStudentApi(page);
@@ -13,7 +14,11 @@ test('sets security headers and a per-response nonce on main pages', async ({ pa
     const headers = response!.headers();
     expect(headers['x-content-type-options']).toBe('nosniff');
     expect(headers['referrer-policy']).toBe('strict-origin-when-cross-origin');
-    expect(headers['permissions-policy']).toBe('camera=(), microphone=(), geolocation=()');
+    expect(headers['permissions-policy']).toBe(
+      path === scannerPath
+        ? 'camera=(self), microphone=(), geolocation=()'
+        : 'camera=(), microphone=(), geolocation=()',
+    );
     expect(headers['x-frame-options']).toBe('DENY');
     expect(headers['cross-origin-opener-policy']).toBe('same-origin-allow-popups');
     expect(headers['cross-origin-embedder-policy']).toBe('require-corp');
