@@ -26,7 +26,10 @@ describe('AuthController', () => {
     createLoginStart: ReturnType<typeof vi.fn>;
     verifyCallback: ReturnType<typeof vi.fn>;
   };
-  let rateLimit: { consume: ReturnType<typeof vi.fn> };
+  let rateLimit: {
+    consume: ReturnType<typeof vi.fn>;
+    publishSessionRevocation: ReturnType<typeof vi.fn>;
+  };
   let oauthStartLimit: number;
   let oauthCallbackLimit: number;
   let response: Response;
@@ -57,7 +60,10 @@ describe('AuthController', () => {
         avatarUrl: null,
       }),
     };
-    rateLimit = { consume: vi.fn().mockResolvedValue(undefined) };
+    rateLimit = {
+      consume: vi.fn().mockResolvedValue(undefined),
+      publishSessionRevocation: vi.fn().mockResolvedValue(undefined),
+    };
     oauthStartLimit = 1200;
     oauthCallbackLimit = 1200;
     responseMethods = {

@@ -1,4 +1,10 @@
-import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import {
   CheckInMethod,
   EventStatus,
@@ -20,6 +26,10 @@ import {
 import type { ManualCheckinDto } from './dto/manual-checkin.dto';
 import type { OfflineCheckinDto } from './dto/sync-checkins.dto';
 import { TicketSigningService, type TicketClaims } from './ticket-signing.service';
+import {
+  EVENT_DASHBOARD_PUBLISHER,
+  type EventDashboardPublisher,
+} from '../realtime/event-dashboard.types';
 
 const ticketWithRsvp = {
   rsvp: {
@@ -51,9 +61,13 @@ type CheckinResult = {
 
 @Injectable()
 export class CheckinsRepository {
+  private readonly logger = new Logger(CheckinsRepository.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly ticketSigning: TicketSigningService,
+    @Inject(EVENT_DASHBOARD_PUBLISHER)
+    private readonly dashboard: EventDashboardPublisher,
   ) {}
 
   async getManifest(eventId: string, actor: AuthPrincipal, query: CheckinManifestQueryDto) {
@@ -107,7 +121,7 @@ export class CheckinsRepository {
     }
     const ticketIdHash = TicketSigningService.hashTicketId(claims.ticketId);
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       await this.authorizeEvent(tx, eventId, actor);
       const ticket = await tx.ticket.findUnique({
         where: { ticketIdHash },
@@ -143,6 +157,10 @@ export class CheckinsRepository {
       );
       return { status: 'VALID' as const, checkedInAt };
     });
+    if (result.status === 'VALID') {
+      await this.publishDashboardUpdate(eventId);
+    }
+    return result;
   }
 
   async syncCheckins(
@@ -150,7 +168,7 @@ export class CheckinsRepository {
     actor: AuthPrincipal,
     scans: OfflineCheckinDto[],
   ): Promise<{ data: CheckinResult[] }> {
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       await this.authorizeEvent(tx, eventId, actor);
       const data: CheckinResult[] = [];
       for (const scan of scans) {
@@ -158,6 +176,10 @@ export class CheckinsRepository {
       }
       return { data };
     });
+    if (result.data.some((item) => item.status === 'VALID')) {
+      await this.publishDashboardUpdate(eventId);
+    }
+    return result;
   }
 
   async lookup(eventId: string, actor: AuthPrincipal, query: ManualCheckinLookupDto) {
@@ -227,7 +249,7 @@ export class CheckinsRepository {
   }
 
   async manualCheckIn(eventId: string, actor: AuthPrincipal, dto: ManualCheckinDto) {
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       await this.authorizeEvent(tx, eventId, actor);
       const rsvp = await tx.rsvp.findFirst({
         where: { id: dto.rsvpId, eventId, status: RsvpStatus.GOING },
@@ -252,6 +274,16 @@ export class CheckinsRepository {
         ),
       };
     });
+    await this.publishDashboardUpdate(eventId);
+    return result;
+  }
+
+  private async publishDashboardUpdate(eventId: string): Promise<void> {
+    try {
+      await this.dashboard.publishCheckIn(eventId);
+    } catch {
+      this.logger.error('A committed check-in dashboard update could not be published.');
+    }
   }
 
   private async syncOne(

@@ -9,6 +9,7 @@ import { assertE2eAuthBypassNotEnabledInProduction } from './config/e2e-auth-byp
 import { HttpExceptionFilter } from './http-exception.filter';
 import { createCorsOptions, helmetOptions } from './http-security';
 import { configureRequestBodyLimits } from './request-body-limits';
+import { RealtimeIoAdapter } from './realtime/realtime-io.adapter';
 
 async function bootstrap(): Promise<void> {
   const { AppModule } = await import('./app.module');
@@ -18,6 +19,7 @@ async function bootstrap(): Promise<void> {
   });
   app.enableShutdownHooks();
   const config = app.get(ConfigService<Environment, true>);
+  app.useWebSocketAdapter(new RealtimeIoAdapter(app, config.get('WEB_ORIGIN', { infer: true })));
 
   app
     .getHttpAdapter()
