@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Inject,
   Param,
@@ -22,6 +23,7 @@ import { CreateImageUploadDto } from './dto/create-image-upload.dto';
 import { ListEventsDto } from './dto/list-events.dto';
 import { RejectEventDto } from './dto/reject-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
+import { CreateEventSeriesDto } from '../venues/dto/create-event-series.dto';
 import { EventsService } from './events.service';
 
 function requirePrincipal(request: AuthenticatedRequest): AuthPrincipal {
@@ -34,6 +36,11 @@ function requirePrincipal(request: AuthenticatedRequest): AuthPrincipal {
 const eventImageRateLimit: RateLimitMessages = {
   exceeded: 'Too many image requests. Try again later.',
   unavailable: 'Image delivery is temporarily unavailable.',
+};
+
+const eventBookingWriteRateLimit: RateLimitMessages = {
+  exceeded: 'Too many event or venue booking changes. Try again later.',
+  unavailable: 'Event or venue booking changes are temporarily unavailable.',
 };
 
 @Controller('events')
@@ -57,46 +64,74 @@ export class EventsController {
 
   @Post()
   @Roles(UserRole.ORGANIZER, UserRole.ADMIN)
-  create(@Req() request: AuthenticatedRequest, @Body() dto: CreateEventDto) {
-    return this.events.create(requirePrincipal(request), dto);
+  async create(@Req() request: AuthenticatedRequest, @Body() dto: CreateEventDto) {
+    const principal = requirePrincipal(request);
+    await this.consumeBookingWriteLimit(principal);
+    return this.events.create(principal, dto);
+  }
+
+  @Post('series')
+  @Roles(UserRole.ORGANIZER, UserRole.ADMIN)
+  async createSeries(@Req() request: AuthenticatedRequest, @Body() dto: CreateEventSeriesDto) {
+    const principal = requirePrincipal(request);
+    await this.consumeBookingWriteLimit(principal);
+    return this.events.createSeries(principal, dto);
   }
 
   @Patch(':id')
   @Roles(UserRole.ORGANIZER, UserRole.ADMIN)
-  update(
+  async update(
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateEventDto,
   ) {
-    return this.events.update(requirePrincipal(request), id, dto);
+    const principal = requirePrincipal(request);
+    await this.consumeBookingWriteLimit(principal);
+    return this.events.update(principal, id, dto);
   }
 
   @Post(':id/submit')
   @Roles(UserRole.ORGANIZER, UserRole.ADMIN)
-  submit(@Req() request: AuthenticatedRequest, @Param('id', ParseUUIDPipe) id: string) {
-    return this.events.submit(requirePrincipal(request), id);
+  async submit(@Req() request: AuthenticatedRequest, @Param('id', ParseUUIDPipe) id: string) {
+    const principal = requirePrincipal(request);
+    await this.consumeBookingWriteLimit(principal);
+    return this.events.submit(principal, id);
   }
 
   @Post(':id/approve')
   @Roles(UserRole.ADMIN)
-  approve(@Req() request: AuthenticatedRequest, @Param('id', ParseUUIDPipe) id: string) {
-    return this.events.approve(requirePrincipal(request), id);
+  async approve(@Req() request: AuthenticatedRequest, @Param('id', ParseUUIDPipe) id: string) {
+    const principal = requirePrincipal(request);
+    await this.consumeBookingWriteLimit(principal);
+    return this.events.approve(principal, id);
   }
 
   @Post(':id/reject')
   @Roles(UserRole.ADMIN)
-  reject(
+  async reject(
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: RejectEventDto,
   ) {
-    return this.events.reject(requirePrincipal(request), id, dto);
+    const principal = requirePrincipal(request);
+    await this.consumeBookingWriteLimit(principal);
+    return this.events.reject(principal, id, dto);
   }
 
   @Post(':id/cancel')
   @Roles(UserRole.ORGANIZER, UserRole.ADMIN)
-  cancel(@Req() request: AuthenticatedRequest, @Param('id', ParseUUIDPipe) id: string) {
-    return this.events.cancel(requirePrincipal(request), id);
+  async cancel(@Req() request: AuthenticatedRequest, @Param('id', ParseUUIDPipe) id: string) {
+    const principal = requirePrincipal(request);
+    await this.consumeBookingWriteLimit(principal);
+    return this.events.cancel(principal, id);
+  }
+
+  @Delete(':id')
+  @Roles(UserRole.ORGANIZER, UserRole.ADMIN)
+  async delete(@Req() request: AuthenticatedRequest, @Param('id', ParseUUIDPipe) id: string) {
+    const principal = requirePrincipal(request);
+    await this.consumeBookingWriteLimit(principal);
+    return this.events.delete(principal, id);
   }
 
   @Post(':id/image-upload')
@@ -142,5 +177,15 @@ export class EventsController {
         'Cross-Origin-Resource-Policy': 'cross-origin',
       })
       .send(image.body);
+  }
+
+  private consumeBookingWriteLimit(principal: AuthPrincipal): Promise<void> {
+    return this.rateLimit.consume(
+      'venue-booking-write-user',
+      principal.id,
+      30,
+      60_000,
+      eventBookingWriteRateLimit,
+    );
   }
 }

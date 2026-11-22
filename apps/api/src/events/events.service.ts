@@ -13,6 +13,7 @@ import type { CreateImageUploadDto } from './dto/create-image-upload.dto';
 import type { ListEventsDto } from './dto/list-events.dto';
 import type { RejectEventDto } from './dto/reject-event.dto';
 import type { UpdateEventDto } from './dto/update-event.dto';
+import type { CreateEventSeriesDto } from '../venues/dto/create-event-series.dto';
 import {
   ALLOWED_EVENT_IMAGE_TYPES,
   EVENT_IMAGE_UPLOAD_TTL_SECONDS,
@@ -23,6 +24,7 @@ import { EventImageStorageService } from './event-image-storage.service';
 import { sanitizeDescription } from './event-description-sanitizer';
 import { type EventRecord, EventsRepository } from './events.repository';
 import { toEventResponseDto } from './event-response.dto';
+import { VenueBookingsService } from '../venues/venue-bookings.service';
 
 function slugify(title: string): string {
   const base = title
@@ -54,6 +56,7 @@ export class EventsService {
   constructor(
     private readonly repository: EventsRepository,
     private readonly imageStorage: EventImageStorageService,
+    private readonly venueBookings: VenueBookingsService,
   ) {}
 
   async list(actor: AuthPrincipal, query: ListEventsDto) {
@@ -160,7 +163,9 @@ export class EventsService {
         endAt,
         timeZone: dto.timeZone,
         capacity: dto.capacity ?? null,
+        expectedAttendance: dto.expectedAttendance ?? dto.capacity ?? null,
         isPublic: dto.isPublic,
+        venueId: dto.venueId ?? null,
         clubId: dto.clubId,
         categoryId: dto.categoryId,
         createdById: actor.id,
@@ -169,6 +174,77 @@ export class EventsService {
       actor.id,
     );
     return toEventResponseDto(event);
+  }
+
+  async createSeries(actor: AuthPrincipal, dto: CreateEventSeriesDto) {
+    this.assertCanManage(actor.role);
+    await this.assertCanManageClub(actor, dto.clubId);
+    await this.requireActiveCategory(dto.categoryId);
+
+    const startAt = parseDate(dto.startAt);
+    const endAt = parseDate(dto.endAt);
+    assertValidRange(startAt, endAt);
+    this.assertValidTimeZone(dto.timeZone);
+    if ((dto.recurrence.count === undefined) === (dto.recurrence.untilDate === undefined)) {
+      throw new BadRequestException('Specify exactly one recurrence count or end date.');
+    }
+
+    for (const date of dto.exceptionDates) {
+      const parsed = new Date(`${date}T00:00:00.000Z`);
+      if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
+        throw new BadRequestException('exceptionDates must contain valid calendar dates.');
+      }
+    }
+
+    const expectedAttendance = dto.expectedAttendance ?? dto.capacity ?? 0;
+    const occurrences = this.venueBookings.getOccurrences({
+      venueId: dto.venueId ?? '',
+      startAt,
+      endAt,
+      expectedAttendance,
+      recurrence: dto.recurrence,
+      exceptionDates: dto.exceptionDates,
+    });
+    if (dto.venueId && expectedAttendance < 1) {
+      throw new BadRequestException(
+        'expectedAttendance or capacity is required when booking a venue.',
+      );
+    }
+
+    const result = await this.repository.createEventSeries(
+      occurrences.map((occurrence) => ({
+        title: dto.title.trim(),
+        slug: slugify(dto.title),
+        description: sanitizeDescription(dto.description),
+        startAt: occurrence.startAt,
+        endAt: occurrence.endAt,
+        timeZone: dto.timeZone,
+        capacity: dto.capacity ?? null,
+        expectedAttendance: dto.expectedAttendance ?? dto.capacity ?? null,
+        isPublic: dto.isPublic,
+        venueId: dto.venueId ?? null,
+        occurrenceIndex: occurrence.occurrenceIndex,
+        clubId: dto.clubId,
+        categoryId: dto.categoryId,
+        createdById: actor.id,
+        status: EventStatus.DRAFT,
+      })),
+      {
+        frequency: dto.recurrence.frequency,
+        interval: dto.recurrence.interval,
+        occurrenceCount: dto.recurrence.count ?? null,
+        untilDate: dto.recurrence.untilDate
+          ? new Date(`${dto.recurrence.untilDate}T00:00:00.000Z`)
+          : null,
+        exceptionDates: dto.exceptionDates.map((date) => new Date(`${date}T00:00:00.000Z`)),
+      },
+      occurrences,
+      actor.id,
+    );
+    return {
+      seriesId: result.seriesId,
+      events: result.events.map((event) => toEventResponseDto(event)),
+    };
   }
 
   async update(actor: AuthPrincipal, id: string, dto: UpdateEventDto) {
@@ -204,8 +280,12 @@ export class EventsService {
       ...(dto.endAt !== undefined ? { endAt } : {}),
       ...(dto.timeZone !== undefined ? { timeZone: dto.timeZone } : {}),
       ...(dto.capacity !== undefined ? { capacity: dto.capacity } : {}),
+      ...(dto.expectedAttendance !== undefined
+        ? { expectedAttendance: dto.expectedAttendance }
+        : {}),
       ...(dto.isPublic !== undefined ? { isPublic: dto.isPublic } : {}),
       ...(dto.categoryId !== undefined ? { categoryId: dto.categoryId } : {}),
+      ...(dto.venueId !== undefined ? { venueId: dto.venueId } : {}),
       ...(requiresApproval
         ? {
             status: EventStatus.PENDING_APPROVAL,
@@ -223,6 +303,7 @@ export class EventsService {
       current.status,
       data,
       actor.id,
+      current.updatedAt,
       requiresApproval
         ? {
             action: 'EVENT_UPDATED_REQUIRES_APPROVAL',
@@ -297,6 +378,17 @@ export class EventsService {
       approvedById: null,
       approvedAt: null,
     });
+  }
+
+  async delete(actor: AuthPrincipal, id: string) {
+    this.assertCanManage(actor.role);
+    const event = await this.requireEvent(id);
+    await this.assertCanManageEvent(actor, event);
+    const deleted = await this.repository.deleteEvent(id, event.status, event.updatedAt, actor.id);
+    if (!deleted) {
+      throw new ConflictException('The event changed while it was being deleted.');
+    }
+    return { id: deleted.id, status: 'DELETED' as const };
   }
 
   async createImageUpload(actor: AuthPrincipal, id: string, dto: CreateImageUploadDto) {
@@ -401,6 +493,7 @@ export class EventsService {
       event.status,
       { ...extra, status: toStatus },
       actor.id,
+      event.updatedAt,
       {
         action,
         metadata: {
