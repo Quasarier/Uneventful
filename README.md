@@ -2,6 +2,9 @@
 
 Uneventful is a pnpm monorepo with a Next.js web app and a NestJS API.
 
+See [Agent Rules](./docs/AGENT_RULES.md) for the repository's security, Git,
+testing, and task-reporting requirements.
+
 ## Requirements
 
 - Node.js 22.13 or newer
