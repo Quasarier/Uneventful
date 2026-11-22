@@ -38,6 +38,7 @@ const environmentSchema = z
         );
       }, 'Must use redis or rediss with an optional numeric database path'),
     RSVP_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(120).default(10),
+    CHECKIN_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(500).default(120),
     ANONYMOUS_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(301).max(10_000).default(1_200),
     GOOGLE_OAUTH_START_RATE_LIMIT_PER_15_MINUTES: z.coerce
       .number()
@@ -118,6 +119,17 @@ const environmentSchema = z
       .string()
       .regex(/^[A-Za-z0-9+/]+={0,2}$/)
       .optional(),
+    TICKET_SIGNING_PRIVATE_KEY_B64: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/),
+    TICKET_SIGNING_PUBLIC_KEY_B64: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/),
+    TICKET_SIGNING_KEY_ID: z.string().regex(/^[A-Za-z0-9._-]{1,128}$/),
+    TICKET_SIGNING_PREVIOUS_KEY_ID: z
+      .string()
+      .regex(/^[A-Za-z0-9._-]{1,128}$/)
+      .optional(),
+    TICKET_SIGNING_PREVIOUS_PUBLIC_KEY_B64: z
+      .string()
+      .regex(/^[A-Za-z0-9+/]+={0,2}$/)
+      .optional(),
     JWT_ISSUER: z.string().url(),
     JWT_AUDIENCE: z.string().min(1),
     REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().min(1).max(90),
@@ -138,6 +150,24 @@ const environmentSchema = z
         code: 'custom',
         path: ['JWT_PREVIOUS_KEY_ID'],
         message: 'Previous and current key IDs must be different',
+      });
+    }
+
+    const hasPreviousTicketKeyId = environment.TICKET_SIGNING_PREVIOUS_KEY_ID !== undefined;
+    const hasPreviousTicketPublicKey =
+      environment.TICKET_SIGNING_PREVIOUS_PUBLIC_KEY_B64 !== undefined;
+    if (hasPreviousTicketKeyId !== hasPreviousTicketPublicKey) {
+      context.addIssue({
+        code: 'custom',
+        path: ['TICKET_SIGNING_PREVIOUS_KEY_ID'],
+        message: 'Previous ticket key ID and public key must be configured together',
+      });
+    }
+    if (environment.TICKET_SIGNING_PREVIOUS_KEY_ID === environment.TICKET_SIGNING_KEY_ID) {
+      context.addIssue({
+        code: 'custom',
+        path: ['TICKET_SIGNING_PREVIOUS_KEY_ID'],
+        message: 'Previous and current ticket key IDs must be different',
       });
     }
 
