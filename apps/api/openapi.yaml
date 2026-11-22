@@ -187,6 +187,179 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
+  /events/{id}/checkin-manifest:
+    get:
+      operationId: getCheckinManifest
+      summary: Download a paginated offline check-in manifest
+      description: >
+        Organizers with active membership in the event club and admins may download public
+        verification keys and ticket ID hashes. Each page is capped at 500 entries and audited.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EventId'
+        - in: query
+          name: cursor
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 500
+      responses:
+        '200':
+          description: A bounded page of ticket identifiers and public verification keys.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckinManifest'
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /events/{id}/checkins:
+    post:
+      operationId: checkinTicket
+      summary: Verify and atomically consume a signed ticket
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EventId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckinTicketRequest'
+      responses:
+        '201':
+          description: The ticket was checked in or had already been used.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckinResult'
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /events/{id}/checkins/sync:
+    post:
+      operationId: syncOfflineCheckins
+      summary: Idempotently sync a bounded batch of offline scans
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EventId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OfflineCheckinBatch'
+      responses:
+        '201':
+          description: Per-scan sync results; invalid items do not fail the batch.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfflineCheckinBatchResult'
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /events/{id}/checkins/lookup:
+    get:
+      operationId: lookupCheckinAttendees
+      summary: Search attendees by display name for manual check-in
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EventId'
+        - in: query
+          name: q
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 100
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Allowlisted attendee display names and check-in state.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManualCheckinLookupResult'
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /events/{id}/checkins/manual:
+    post:
+      operationId: manualCheckinAttendee
+      summary: Check in a confirmed attendee by RSVP ID
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EventId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManualCheckinRequest'
+      responses:
+        '201':
+          description: The attendee was manually checked in.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckinResult'
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /events/{id}/rsvp/status:
     get:
       operationId: getEventRsvpStatus
@@ -305,6 +478,16 @@ components:
   responses:
     Error:
       description: Request failed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    RateLimited:
+      description: Global or per-user request rate limit exceeded.
+      headers:
+        Retry-After:
+          schema:
+            type: string
       content:
         application/json:
           schema:
@@ -535,7 +718,7 @@ components:
       properties:
         status:
           type: string
-          enum: [ISSUED, REDEEMED, REVOKED]
+          enum: [ISSUED, USED, REVOKED]
         expiresAt:
           type: string
           format: date-time
@@ -583,3 +766,149 @@ components:
           type: string
           format: date-time
       required: [eventId, rsvpId, token, expiresAt]
+    CheckinManifest:
+      type: object
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        eventEndAt:
+          type: string
+          format: date-time
+        publicKeys:
+          $ref: '#/components/schemas/TicketPublicKeySet'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ManifestTicket'
+        nextCursor:
+          type: string
+          format: uuid
+      required: [eventId, eventEndAt, publicKeys, data]
+    TicketPublicKeySet:
+      type: object
+      properties:
+        currentKid:
+          type: string
+        keys:
+          type: array
+          items:
+            type: object
+            properties:
+              kid:
+                type: string
+              publicKey:
+                type: string
+            required: [kid, publicKey]
+      required: [currentKid, keys]
+    ManifestTicket:
+      type: object
+      properties:
+        ticketIdHash:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+        status:
+          type: string
+          enum: [ISSUED, USED, REVOKED]
+      required: [ticketIdHash, status]
+    CheckinTicketRequest:
+      type: object
+      properties:
+        ticket:
+          type: string
+          minLength: 1
+          maxLength: 8192
+        deviceId:
+          type: string
+          format: uuid
+      required: [ticket, deviceId]
+    ManualCheckinRequest:
+      type: object
+      properties:
+        rsvpId:
+          type: string
+          format: uuid
+        deviceId:
+          type: string
+          format: uuid
+      required: [rsvpId, deviceId]
+    CheckinResult:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [VALID, ALREADY_USED]
+        checkedInAt:
+          type: string
+          format: date-time
+      required: [status, checkedInAt]
+    OfflineCheckin:
+      type: object
+      properties:
+        ticketIdHash:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+        deviceId:
+          type: string
+          format: uuid
+        scannedAt:
+          type: string
+          format: date-time
+      required: [ticketIdHash, deviceId, scannedAt]
+    OfflineCheckinBatch:
+      type: object
+      properties:
+        scans:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/OfflineCheckin'
+      required: [scans]
+    OfflineCheckinResult:
+      type: object
+      properties:
+        ticketIdHash:
+          type: string
+        status:
+          type: string
+          enum: [VALID, DUPLICATE, INVALID, WRONG_EVENT]
+        checkedInAt:
+          type: string
+          format: date-time
+      required: [ticketIdHash, status]
+    OfflineCheckinBatchResult:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/OfflineCheckinResult'
+      required: [data]
+    ManualCheckinAttendee:
+      type: object
+      properties:
+        rsvpId:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+        status:
+          $ref: '#/components/schemas/RsvpStatus'
+        checkedInAt:
+          type: [string, 'null']
+          format: date-time
+      required: [rsvpId, displayName, status, checkedInAt]
+    ManualCheckinLookupResult:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ManualCheckinAttendee'
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+      required: [data, page, limit, total]

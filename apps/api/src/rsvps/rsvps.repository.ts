@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import {
   EventStatus,
   NotificationType,
@@ -15,6 +15,7 @@ import {
 import { PrismaService } from '../database/prisma.service';
 import { toEventResponseDto } from '../events/event-response.dto';
 import type { AuthPrincipal } from '../auth/auth.types';
+import { TicketSigningService } from './ticket-signing.service';
 import {
   MAX_ATTENDEE_PAGE_SIZE,
   type EventAttendeeDto,
@@ -48,7 +49,10 @@ type EventAttendeeRecord = Prisma.RsvpGetPayload<{ select: typeof eventAttendeeS
 
 @Injectable()
 export class RsvpsRepository {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly ticketSigning: TicketSigningService,
+  ) {}
 
   async listMine(userId: string) {
     const rsvps = await this.prisma.rsvp.findMany({
@@ -268,7 +272,7 @@ export class RsvpsRepository {
             });
 
         const ticketToken = going
-          ? await this.issueTicketInTransaction(tx, rsvp.id, event.endAt)
+          ? await this.issueTicketInTransaction(tx, rsvp.id, event.id, event.endAt)
           : null;
         await this.createNotification(
           tx,
@@ -339,7 +343,10 @@ export class RsvpsRepository {
       if (!event || event.deletedAt || !event.isPublic) {
         throw new NotFoundException('Event not found.');
       }
-      if (event.status !== EventStatus.APPROVED || event.endAt <= new Date()) {
+      if (event.status !== EventStatus.APPROVED) {
+        throw new NotFoundException('Event not found.');
+      }
+      if (TicketSigningService.expiresAt(event.endAt) <= new Date()) {
         throw new ConflictException('A ticket is not available for this event.');
       }
 
@@ -348,14 +355,19 @@ export class RsvpsRepository {
         include: { ticket: true },
       });
       if (!rsvp || rsvp.status !== RsvpStatus.GOING) {
-        throw new ConflictException('Only confirmed RSVPs have tickets.');
+        throw new NotFoundException('Event not found.');
       }
-      if (rsvp.ticket?.status === TicketStatus.REDEEMED) {
+      if (rsvp.ticket?.status === TicketStatus.USED) {
         throw new ConflictException('This ticket has already been used.');
       }
 
-      const token = await this.issueTicketInTransaction(tx, rsvp.id, event.endAt);
-      return { eventId, rsvpId: rsvp.id, token, expiresAt: event.endAt };
+      const token = await this.issueTicketInTransaction(tx, rsvp.id, event.id, event.endAt);
+      return {
+        eventId,
+        rsvpId: rsvp.id,
+        token,
+        expiresAt: TicketSigningService.expiresAt(event.endAt),
+      };
     });
   }
 
@@ -416,7 +428,7 @@ export class RsvpsRepository {
         where: { id: next.id },
         data: { status: RsvpStatus.GOING, waitlistPosition: null },
       });
-      await this.issueTicketInTransaction(tx, next.id, event.endAt);
+      await this.issueTicketInTransaction(tx, next.id, event.id, event.endAt);
       await this.createNotification(
         tx,
         next.userId,
@@ -508,21 +520,42 @@ export class RsvpsRepository {
   private async issueTicketInTransaction(
     tx: Prisma.TransactionClient,
     rsvpId: string,
-    expiresAt: Date,
+    eventId: string,
+    eventEndAt: Date,
   ): Promise<string> {
-    const token = randomBytes(32).toString('base64url');
-    const tokenHash = createHash('sha256').update(token).digest('hex');
-    await tx.ticket.upsert({
+    const expiresAt = TicketSigningService.expiresAt(eventEndAt);
+    const existing = await tx.ticket.findUnique({
       where: { rsvpId },
-      create: { rsvpId, tokenHash, expiresAt },
-      update: {
-        tokenHash,
-        expiresAt,
-        status: TicketStatus.ISSUED,
-        revokedAt: null,
-      },
+      select: { id: true, status: true },
     });
-    return token;
+    let ticketId: string;
+    if (!existing) {
+      ticketId = randomUUID();
+      await tx.ticket.create({
+        data: {
+          id: ticketId,
+          rsvpId,
+          ticketIdHash: TicketSigningService.hashTicketId(ticketId),
+          expiresAt,
+        },
+      });
+    } else {
+      const updated = await tx.ticket.updateMany({
+        where: { id: existing.id, status: { not: TicketStatus.USED } },
+        data: {
+          ticketIdHash: TicketSigningService.hashTicketId(existing.id),
+          expiresAt,
+          status: TicketStatus.ISSUED,
+          revokedAt: null,
+        },
+      });
+      if (updated.count !== 1) {
+        throw new ConflictException('This ticket has already been used.');
+      }
+      ticketId = existing.id;
+    }
+
+    return this.ticketSigning.issue({ ticketId, eventId, rsvpId }, expiresAt);
   }
 
   private async createNotification(

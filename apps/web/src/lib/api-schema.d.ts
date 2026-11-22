@@ -109,6 +109,94 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/events/{id}/checkin-manifest': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Download a paginated offline check-in manifest
+     * @description Organizers with active membership in the event club and admins may download public verification keys and ticket ID hashes. Each page is capped at 500 entries and audited.
+     */
+    get: operations['getCheckinManifest'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/events/{id}/checkins': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Verify and atomically consume a signed ticket */
+    post: operations['checkinTicket'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/events/{id}/checkins/sync': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Idempotently sync a bounded batch of offline scans */
+    post: operations['syncOfflineCheckins'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/events/{id}/checkins/lookup': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Search attendees by display name for manual check-in */
+    get: operations['lookupCheckinAttendees'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/events/{id}/checkins/manual': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Check in a confirmed attendee by RSVP ID */
+    post: operations['manualCheckinAttendee'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/events/{id}/rsvp/status': {
     parameters: {
       query?: never;
@@ -288,7 +376,7 @@ export interface components {
     };
     TicketMetadata: {
       /** @enum {string} */
-      status: 'ISSUED' | 'REDEEMED' | 'REVOKED';
+      status: 'ISSUED' | 'USED' | 'REVOKED';
       /** Format: date-time */
       expiresAt: string;
     };
@@ -314,11 +402,94 @@ export interface components {
       /** Format: date-time */
       expiresAt: string;
     };
+    CheckinManifest: {
+      /** Format: uuid */
+      eventId: string;
+      /** Format: date-time */
+      eventEndAt: string;
+      publicKeys: components['schemas']['TicketPublicKeySet'];
+      data: components['schemas']['ManifestTicket'][];
+      /** Format: uuid */
+      nextCursor?: string;
+    };
+    TicketPublicKeySet: {
+      currentKid: string;
+      keys: {
+        kid: string;
+        publicKey: string;
+      }[];
+    };
+    ManifestTicket: {
+      ticketIdHash: string;
+      /** @enum {string} */
+      status: 'ISSUED' | 'USED' | 'REVOKED';
+    };
+    CheckinTicketRequest: {
+      ticket: string;
+      /** Format: uuid */
+      deviceId: string;
+    };
+    ManualCheckinRequest: {
+      /** Format: uuid */
+      rsvpId: string;
+      /** Format: uuid */
+      deviceId: string;
+    };
+    CheckinResult: {
+      /** @enum {string} */
+      status: 'VALID' | 'ALREADY_USED';
+      /** Format: date-time */
+      checkedInAt: string;
+    };
+    OfflineCheckin: {
+      ticketIdHash: string;
+      /** Format: uuid */
+      deviceId: string;
+      /** Format: date-time */
+      scannedAt: string;
+    };
+    OfflineCheckinBatch: {
+      scans: components['schemas']['OfflineCheckin'][];
+    };
+    OfflineCheckinResult: {
+      ticketIdHash: string;
+      /** @enum {string} */
+      status: 'VALID' | 'DUPLICATE' | 'INVALID' | 'WRONG_EVENT';
+      /** Format: date-time */
+      checkedInAt?: string;
+    };
+    OfflineCheckinBatchResult: {
+      data: components['schemas']['OfflineCheckinResult'][];
+    };
+    ManualCheckinAttendee: {
+      /** Format: uuid */
+      rsvpId: string;
+      displayName: string;
+      status: components['schemas']['RsvpStatus'];
+      /** Format: date-time */
+      checkedInAt: string | null;
+    };
+    ManualCheckinLookupResult: {
+      data: components['schemas']['ManualCheckinAttendee'][];
+      page: number;
+      limit: number;
+      total: number;
+    };
   };
   responses: {
     /** @description Request failed. */
     Error: {
       headers: {
+        [name: string]: unknown;
+      };
+      content: {
+        'application/json': components['schemas']['ApiError'];
+      };
+    };
+    /** @description Global or per-user request rate limit exceeded. */
+    RateLimited: {
+      headers: {
+        'Retry-After'?: string;
         [name: string]: unknown;
       };
       content: {
@@ -490,6 +661,150 @@ export interface operations {
           'application/json': components['schemas']['ApiError'];
         };
       };
+    };
+  };
+  getCheckinManifest: {
+    parameters: {
+      query?: {
+        cursor?: string;
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        id: components['parameters']['EventId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description A bounded page of ticket identifiers and public verification keys. */
+      200: {
+        headers: {
+          'Cache-Control'?: 'private, no-store';
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CheckinManifest'];
+        };
+      };
+      404: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  checkinTicket: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components['parameters']['EventId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CheckinTicketRequest'];
+      };
+    };
+    responses: {
+      /** @description The ticket was checked in or had already been used. */
+      201: {
+        headers: {
+          'Cache-Control'?: 'private, no-store';
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CheckinResult'];
+        };
+      };
+      404: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  syncOfflineCheckins: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components['parameters']['EventId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['OfflineCheckinBatch'];
+      };
+    };
+    responses: {
+      /** @description Per-scan sync results; invalid items do not fail the batch. */
+      201: {
+        headers: {
+          'Cache-Control'?: 'private, no-store';
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['OfflineCheckinBatchResult'];
+        };
+      };
+      404: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  lookupCheckinAttendees: {
+    parameters: {
+      query: {
+        q: string;
+        page?: number;
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        id: components['parameters']['EventId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Allowlisted attendee display names and check-in state. */
+      200: {
+        headers: {
+          'Cache-Control'?: 'private, no-store';
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ManualCheckinLookupResult'];
+        };
+      };
+      404: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  manualCheckinAttendee: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components['parameters']['EventId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ManualCheckinRequest'];
+      };
+    };
+    responses: {
+      /** @description The attendee was manually checked in. */
+      201: {
+        headers: {
+          'Cache-Control'?: 'private, no-store';
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CheckinResult'];
+        };
+      };
+      404: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
     };
   };
   getEventRsvpStatus: {
