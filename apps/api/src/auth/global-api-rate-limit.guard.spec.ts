@@ -23,6 +23,7 @@ function makeConfig(): ConfigService<Environment, true> {
       GOOGLE_CLIENT_SECRET: 'rate-limit-secret',
       GOOGLE_CALLBACK_URL: 'http://localhost:3001/api/v1/auth/google/callback',
       UNIVERSITY_EMAIL_DOMAIN: 'example.edu',
+      CAMPUS_TIME_ZONE: 'America/New_York',
       WEB_ORIGIN: 'http://localhost:3000',
       SESSION_SECRET: 'test-session-secret-with-at-least-thirty-two-characters',
       JWT_PRIVATE_KEY_B64: Buffer.from('unused-private-key').toString('base64'),

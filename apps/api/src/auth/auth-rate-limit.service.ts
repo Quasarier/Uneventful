@@ -28,7 +28,10 @@ export type AuthRateLimitScope =
   | 'event-image-ip'
   | 'event-image-user'
   | 'rsvp-user'
-  | 'checkin-user';
+  | 'checkin-user'
+  | 'venue-conflict-user'
+  | 'venue-write-user'
+  | 'venue-booking-write-user';
 
 export interface RateLimitMessages {
   exceeded: string;

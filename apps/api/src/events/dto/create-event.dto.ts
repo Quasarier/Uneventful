@@ -9,6 +9,7 @@ import {
   Matches,
   Max,
   Min,
+  ValidateIf,
 } from 'class-validator';
 
 export class CreateEventDto {
@@ -40,6 +41,12 @@ export class CreateEventDto {
   @Max(100_000)
   capacity?: number | null;
 
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(100_000)
+  expectedAttendance?: number | null;
+
   @IsBoolean()
   isPublic!: boolean;
 
@@ -48,4 +55,8 @@ export class CreateEventDto {
 
   @IsUUID()
   categoryId!: string;
+
+  @ValidateIf((_object, value) => value !== undefined && value !== null)
+  @IsUUID()
+  venueId?: string | null;
 }

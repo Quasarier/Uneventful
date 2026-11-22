@@ -89,6 +89,7 @@ function configFor(
     GOOGLE_CLIENT_SECRET: 'rsvp-integration-secret',
     GOOGLE_CALLBACK_URL: 'http://localhost:3001/api/v1/auth/google/callback',
     UNIVERSITY_EMAIL_DOMAIN: 'example.edu',
+    CAMPUS_TIME_ZONE: 'America/New_York',
     WEB_ORIGIN: 'http://localhost:3000',
     SESSION_SECRET: `${randomUUID()}${randomUUID()}`,
     JWT_PRIVATE_KEY_B64: Buffer.from('unused-private-key').toString('base64'),

@@ -19,6 +19,7 @@ function config(): ConfigService<Environment, true> {
       GOOGLE_CLIENT_SECRET: 'test-client-secret',
       GOOGLE_CALLBACK_URL: 'http://localhost:3001/api/v1/auth/google/callback',
       UNIVERSITY_EMAIL_DOMAIN: 'example.edu',
+      CAMPUS_TIME_ZONE: 'America/New_York',
       WEB_ORIGIN: 'http://localhost:3000',
       SESSION_SECRET: 'a-test-session-secret-with-at-least-32-characters',
       JWT_PRIVATE_KEY_B64: Buffer.from('test-private-key').toString('base64'),

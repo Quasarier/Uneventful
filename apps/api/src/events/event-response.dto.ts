@@ -3,6 +3,7 @@ import type { EventRecord } from './events.repository';
 
 type EventClubResponse = Pick<EventRecord['club'], 'name' | 'slug'>;
 type EventCategoryResponse = Pick<EventRecord['category'], 'name' | 'slug'>;
+type EventVenueResponse = Pick<NonNullable<EventRecord['venue']>, 'id' | 'name' | 'building'>;
 
 export interface EventResponseDto {
   id: string;
@@ -14,7 +15,9 @@ export interface EventResponseDto {
   endAt: Date;
   timeZone: string;
   capacity: number | null;
+  expectedAttendance: number | null;
   isPublic: boolean;
+  venue: EventVenueResponse | null;
   clubId: string;
   categoryId: string;
   rejectionReason: string | null;
@@ -39,7 +42,15 @@ export function toEventResponseDto(
     endAt: event.endAt,
     timeZone: event.timeZone,
     capacity: event.capacity,
+    expectedAttendance: event.expectedAttendance,
     isPublic: event.isPublic,
+    venue: event.venue
+      ? {
+          id: event.venue.id,
+          name: event.venue.name,
+          building: event.venue.building,
+        }
+      : null,
     clubId: event.clubId,
     categoryId: event.categoryId,
     rejectionReason: includeRejectionReason ? event.rejectionReason : null,

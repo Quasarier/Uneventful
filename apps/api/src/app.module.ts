@@ -7,9 +7,10 @@ import { EventsModule } from './events/events.module';
 import { DatabaseModule } from './database/database.module';
 import { HealthService } from './health.service';
 import { RsvpsModule } from './rsvps/rsvps.module';
+import { VenuesModule } from './venues/venues.module';
 
 @Module({
-  imports: [AppConfigModule, AuthModule, EventsModule, RsvpsModule, DatabaseModule],
+  imports: [AppConfigModule, AuthModule, EventsModule, RsvpsModule, VenuesModule, DatabaseModule],
   controllers: [AppController],
   providers: [AppService, HealthService],
 })

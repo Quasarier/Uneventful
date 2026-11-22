@@ -62,6 +62,7 @@ describe('authentication database integration', () => {
       GOOGLE_CLIENT_SECRET: 'integration-test-secret',
       GOOGLE_CALLBACK_URL: 'http://localhost:3001/api/v1/auth/google/callback',
       UNIVERSITY_EMAIL_DOMAIN: 'example.edu',
+      CAMPUS_TIME_ZONE: 'America/New_York',
       WEB_ORIGIN: 'http://localhost:3000',
       SESSION_SECRET: randomUUID() + randomUUID(),
       JWT_PRIVATE_KEY_B64: Buffer.from(await exportPKCS8(keyPair.privateKey)).toString('base64'),

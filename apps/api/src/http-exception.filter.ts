@@ -1,6 +1,7 @@
 import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { AuthRateLimitExceededException } from './auth/auth-rate-limit.service';
+import { VenueConflictException } from './venues/venue-conflict.exception';
 
 function errorCodeFor(status: number): string {
   switch (status) {
@@ -29,6 +30,29 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const http = host.switchToHttp();
     const response = http.getResponse<Response>();
     const request = http.getRequest<Request>();
+    if (exception instanceof VenueConflictException) {
+      response.status(HttpStatus.CONFLICT).json({
+        statusCode: HttpStatus.CONFLICT,
+        code: errorCodeFor(HttpStatus.CONFLICT),
+        message: exception.conflict.message,
+        reasons: [...exception.conflict.reasons],
+        conflicts: exception.conflict.conflicts.map(({ startAt, endAt }) => ({
+          startAt,
+          endAt,
+        })),
+        alternatives: exception.conflict.alternatives.map(
+          ({ venueId, name, building, startAt, endAt }) => ({
+            venueId,
+            name,
+            building,
+            startAt,
+            endAt,
+          }),
+        ),
+        path: request.path,
+      });
+      return;
+    }
     const bodyParserError =
       typeof exception === 'object' && exception !== null && 'type' in exception
         ? exception.type

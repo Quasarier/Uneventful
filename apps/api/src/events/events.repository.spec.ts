@@ -6,13 +6,22 @@ import { EventsRepository } from './events.repository';
 const event = {
   id: 'c5a59258-67d1-457a-a93f-e7993f31befa',
   status: EventStatus.PENDING_APPROVAL,
+  updatedAt: new Date('2027-01-01T00:00:00.000Z'),
   club: { id: '7c683bc4-2911-4f4d-aa95-167fd0dd9a32', name: 'Robotics', slug: 'robotics' },
   category: { id: '65cad59a-8af7-4e8d-a527-1fe0eccf26da', name: 'Workshop', slug: 'workshop' },
 };
 
+function makeVenueBookings() {
+  return {
+    syncEventBooking: vi.fn().mockResolvedValue(undefined),
+    assertSeriesAvailability: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
 describe('EventsRepository audit transactions', () => {
   it('records event creation together with the initial state audit', async () => {
     const transaction = {
+      $queryRaw: vi.fn().mockResolvedValue([]),
       event: { create: vi.fn().mockResolvedValue({ ...event, status: EventStatus.DRAFT }) },
       auditLog: { create: vi.fn().mockResolvedValue({}) },
     };
@@ -21,7 +30,10 @@ describe('EventsRepository audit transactions', () => {
         callback(transaction),
       ),
     };
-    const repository = new EventsRepository(prisma as unknown as PrismaService);
+    const repository = new EventsRepository(
+      prisma as unknown as PrismaService,
+      makeVenueBookings() as never,
+    );
     const actorId = '93b1a3e8-0dfd-4c8c-a0a5-1f1790730011';
 
     await repository.createEvent(
@@ -42,6 +54,7 @@ describe('EventsRepository audit transactions', () => {
 
   it('writes state updates and their audit records in the same transaction', async () => {
     const transaction = {
+      $queryRaw: vi.fn().mockResolvedValue([]),
       event: {
         updateMany: vi.fn().mockResolvedValue({ count: 1 }),
         findUnique: vi.fn().mockResolvedValue(event),
@@ -53,7 +66,10 @@ describe('EventsRepository audit transactions', () => {
         callback(transaction),
       ),
     };
-    const repository = new EventsRepository(prisma as unknown as PrismaService);
+    const repository = new EventsRepository(
+      prisma as unknown as PrismaService,
+      makeVenueBookings() as never,
+    );
     const actorId = '93b1a3e8-0dfd-4c8c-a0a5-1f1790730011';
 
     await repository.updateEvent(
@@ -61,6 +77,7 @@ describe('EventsRepository audit transactions', () => {
       EventStatus.DRAFT,
       { status: EventStatus.PENDING_APPROVAL },
       actorId,
+      event.updatedAt,
       {
         action: 'EVENT_SUBMITTED',
         metadata: { fromStatus: EventStatus.DRAFT, toStatus: EventStatus.PENDING_APPROVAL },
@@ -81,6 +98,7 @@ describe('EventsRepository audit transactions', () => {
 
   it('does not write an audit record when a concurrent state transition loses', async () => {
     const transaction = {
+      $queryRaw: vi.fn().mockResolvedValue([]),
       event: {
         updateMany: vi.fn().mockResolvedValue({ count: 0 }),
         findUnique: vi.fn(),
@@ -92,7 +110,10 @@ describe('EventsRepository audit transactions', () => {
         callback(transaction),
       ),
     };
-    const repository = new EventsRepository(prisma as unknown as PrismaService);
+    const repository = new EventsRepository(
+      prisma as unknown as PrismaService,
+      makeVenueBookings() as never,
+    );
 
     await expect(
       repository.updateEvent(
@@ -100,6 +121,7 @@ describe('EventsRepository audit transactions', () => {
         EventStatus.DRAFT,
         { status: EventStatus.PENDING_APPROVAL },
         '93b1a3e8-0dfd-4c8c-a0a5-1f1790730011',
+        event.updatedAt,
         { action: 'EVENT_SUBMITTED', metadata: { toStatus: EventStatus.PENDING_APPROVAL } },
       ),
     ).resolves.toBeNull();
@@ -108,6 +130,7 @@ describe('EventsRepository audit transactions', () => {
 
   it('audits a confirmed replacement image that moves an approved event back to review', async () => {
     const transaction = {
+      $queryRaw: vi.fn().mockResolvedValue([]),
       event: {
         updateMany: vi.fn().mockResolvedValue({ count: 1 }),
         findUnique: vi.fn().mockResolvedValue({
@@ -122,7 +145,10 @@ describe('EventsRepository audit transactions', () => {
         callback(transaction),
       ),
     };
-    const repository = new EventsRepository(prisma as unknown as PrismaService);
+    const repository = new EventsRepository(
+      prisma as unknown as PrismaService,
+      makeVenueBookings() as never,
+    );
     const actorId = '93b1a3e8-0dfd-4c8c-a0a5-1f1790730011';
     const uploadKey = `event-uploads/staging/${event.id}/${actorId}.png`;
     const finalKey = `events/${event.id}/${actorId}.png`;

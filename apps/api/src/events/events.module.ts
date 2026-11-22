@@ -5,9 +5,10 @@ import { EventImageStorageService } from './event-image-storage.service';
 import { EventsController } from './events.controller';
 import { EventsRepository } from './events.repository';
 import { EventsService } from './events.service';
+import { VenueBookingsModule } from '../venues/venue-bookings.module';
 
 @Module({
-  imports: [DatabaseModule, AuthRateLimitModule],
+  imports: [DatabaseModule, AuthRateLimitModule, VenueBookingsModule],
   controllers: [EventsController],
   providers: [EventsRepository, EventsService, EventImageStorageService],
 })

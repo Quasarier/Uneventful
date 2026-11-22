@@ -42,6 +42,7 @@ export default defineConfig({
         OBJECT_STORAGE_ENDPOINT: objectStorageEndpoint,
         AWS_ACCESS_KEY_ID: objectStorageAccessKey,
         AWS_SECRET_ACCESS_KEY: objectStorageSecretKey,
+        CAMPUS_TIME_ZONE: 'America/New_York',
         PORT: apiPort,
         REDIS_URL: redisUrl,
         WEB_ORIGIN: webOrigin,
