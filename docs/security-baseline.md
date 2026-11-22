@@ -48,6 +48,25 @@ active scanner when it observes event end. The scanner uses browser
 `BarcodeDetector` and requires a supported browser and camera permission; the
 camera feature is enabled only on the dedicated event scanner route.
 
+## Venue booking and conflict controls
+
+Venue management is restricted to administrators, while reads expose active
+venue data through allowlisted DTOs. Event and venue writes are per-user
+rate-limited and audited. Booking creation, changes, approval, rejection,
+cancellation, and deletion are coordinated with the event transaction and
+serialized by a venue-row lock. A PostgreSQL GiST exclusion constraint remains
+the final guard against overlapping approved bookings; application conflict
+checks do not replace it.
+
+Event instants are persisted in UTC. Venue opening hours are interpreted in
+`CAMPUS_TIME_ZONE`, validated as an IANA zone at startup. Recurring event series
+are bounded to 52 occurrences, checked as a whole, and written atomically;
+exception dates are supported, and recurring start times retain campus local
+time across DST transitions. Conflict responses disclose only slot start/end
+times and at most three active, capacity-suitable alternatives. The current
+availability model supports one same-day interval per weekday, not overnight
+or multiple daily windows.
+
 ## OWASP ZAP baseline exceptions
 
 The local ZAP baseline scan reports three Low `Cross-Origin-Opener-Policy
