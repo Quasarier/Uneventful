@@ -99,6 +99,9 @@ function configFor(databaseUrl: string): ConfigService<Environment, true> {
     JWT_PRIVATE_KEY_B64: Buffer.from('unused-private-key').toString('base64'),
     JWT_PUBLIC_KEY_B64: Buffer.from('unused-public-key').toString('base64'),
     JWT_KEY_ID: 'events-integration-key',
+    TICKET_SIGNING_PRIVATE_KEY_B64: Buffer.from('unused-ticket-private-key').toString('base64'),
+    TICKET_SIGNING_PUBLIC_KEY_B64: Buffer.from('unused-ticket-public-key').toString('base64'),
+    TICKET_SIGNING_KEY_ID: 'events-integration-ticket-key',
     JWT_ISSUER: 'https://api.uneventful.test',
     JWT_AUDIENCE: 'uneventful-api',
     REFRESH_TOKEN_TTL_DAYS: 30,
@@ -492,9 +495,9 @@ describe('events PostgreSQL/HTTP integration', () => {
     ['approvedById', '00000000-0000-4000-8000-000000000002'],
     ['approvedAt', '2027-03-01T10:00:00.000Z'],
   ])('rejects mass-assignment of %s on POST /events', async (field, value) => {
-    const before = await appPrisma.event.count();
+    const title = `Mass assignment test ${randomUUID()}`;
     const response = await request('organizer', 'POST', '/events', {
-      title: 'Mass assignment test',
+      title,
       description: 'Valid description',
       startAt: '2027-03-01T10:00:00.000Z',
       endAt: '2027-03-01T12:00:00.000Z',
@@ -506,7 +509,7 @@ describe('events PostgreSQL/HTTP integration', () => {
     });
 
     expect(response.status).toBe(400);
-    expect(await appPrisma.event.count()).toBe(before);
+    expect(await appPrisma.event.count({ where: { title } })).toBe(0);
   });
 
   it.each([

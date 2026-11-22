@@ -22,6 +22,32 @@ The web middleware emits `Strict-Transport-Security: max-age=31536000` only
 when `NODE_ENV=production`. It intentionally omits both `includeSubDomains`
 and `preload`.
 
+## Signed QR tickets and offline check-in
+
+Ticket tokens are compact Ed25519 signatures with a `kid` and only the
+`ticketId`, `eventId`, `rsvpId`, `issuedAt`, and `expiresAt` claims. Expiry is
+the event end plus a fixed two-hour grace period. The current private key is
+loaded only by the API from validated configuration; the public key set
+contains the current and optional previous key. During rotation, retain the
+previous public key until its tickets have expired and the grace period has
+elapsed. Never place signing private keys in browser configuration, manifests,
+responses, or logs.
+
+The database stores `SHA-256(ticketId)` and the authoritative
+`ISSUED`/`USED`/`REVOKED` state. Legacy bearer tickets are revoked by the
+Stage 7 migration because their signed replacements cannot be reconstructed
+from stored hashes. Check-in atomically changes `ISSUED` to `USED`; concurrent
+scans and later duplicates cannot create a second check-in. RSVP status is
+rechecked server-side, including after offline validation.
+
+The scanner's IndexedDB database stores only event-scoped public key
+manifests, ticket-ID hashes/statuses, and queued hashes with scan time and
+device ID. It does not store access tokens or signed ticket tokens. This
+device-local data is not authoritative and is cleared by logout and by the
+active scanner when it observes event end. The scanner uses browser
+`BarcodeDetector` and requires a supported browser and camera permission; the
+camera feature is enabled only on the dedicated event scanner route.
+
 ## OWASP ZAP baseline exceptions
 
 The local ZAP baseline scan reports three Low `Cross-Origin-Opener-Policy

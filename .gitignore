@@ -21,6 +21,7 @@ out/
 .vercel/
 apps/api/generated/prisma/
 *.pem
+*.der
 .DS_Store
 Thumbs.db
 *.log

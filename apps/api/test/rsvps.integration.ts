@@ -8,7 +8,7 @@ import {
 import { NestFactory, Reflector } from '@nestjs/core';
 import type { Job } from 'bullmq';
 import Redis from 'ioredis';
-import { randomUUID } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { EventStatus, RsvpStatus, TicketStatus } from '../generated/prisma/client';
 import { AuthRateLimitService } from '../src/auth/auth-rate-limit.service';
@@ -29,12 +29,30 @@ import { RsvpPromotionProcessor } from '../src/rsvps/rsvp-promotion.processor';
 import { RsvpsController } from '../src/rsvps/rsvps.controller';
 import { RsvpsRepository } from '../src/rsvps/rsvps.repository';
 import { RsvpsService } from '../src/rsvps/rsvps.service';
+import { TicketSigningService } from '../src/rsvps/ticket-signing.service';
+import { CheckinsController } from '../src/rsvps/checkins.controller';
+import { CheckinsRepository } from '../src/rsvps/checkins.repository';
+import { CheckinsService } from '../src/rsvps/checkins.service';
+import { CheckinManifestQueryDto } from '../src/rsvps/dto/checkin-manifest-query.dto';
+import { CheckinTicketDto } from '../src/rsvps/dto/checkin-ticket.dto';
+import { ManualCheckinLookupDto } from '../src/rsvps/dto/manual-checkin-lookup.dto';
+import { ManualCheckinDto } from '../src/rsvps/dto/manual-checkin.dto';
+import { SyncCheckinsDto } from '../src/rsvps/dto/sync-checkins.dto';
 import { validateEnvironment, type Environment } from '../src/config/environment';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const appDatabaseUrl = process.env.TEST_DATABASE_URL;
 const migrationDatabaseUrl = process.env.TEST_MIGRATION_DATABASE_URL;
 const redisUrl = process.env.TEST_REDIS_URL;
+const ticketSigningKeys = generateKeyPairSync('ed25519');
+const previousTicketSigningKeys = generateKeyPairSync('ed25519');
+
+interface TicketKeyConfiguration {
+  current: typeof ticketSigningKeys;
+  currentKeyId: string;
+  previous?: typeof ticketSigningKeys;
+  previousKeyId?: string;
+}
 
 if (!appDatabaseUrl || !migrationDatabaseUrl || !redisUrl) {
   throw new Error(
@@ -42,7 +60,25 @@ if (!appDatabaseUrl || !migrationDatabaseUrl || !redisUrl) {
   );
 }
 
-function configFor(databaseUrl: string, rateLimit = 10): ConfigService<Environment, true> {
+function configFor(
+  databaseUrl: string,
+  rateLimit = 10,
+  ticketKeys: TicketKeyConfiguration = {
+    current: ticketSigningKeys,
+    currentKeyId: 'rsvp-integration-ticket-key',
+    previous: previousTicketSigningKeys,
+    previousKeyId: 'rsvp-integration-previous-key',
+  },
+): ConfigService<Environment, true> {
+  const previousKeyConfig =
+    ticketKeys.previous && ticketKeys.previousKeyId
+      ? {
+          TICKET_SIGNING_PREVIOUS_KEY_ID: ticketKeys.previousKeyId,
+          TICKET_SIGNING_PREVIOUS_PUBLIC_KEY_B64: Buffer.from(
+            ticketKeys.previous.publicKey.export({ format: 'der', type: 'spki' }),
+          ).toString('base64'),
+        }
+      : {};
   const environment = validateEnvironment({
     NODE_ENV: 'test',
     PORT: 3001,
@@ -58,6 +94,14 @@ function configFor(databaseUrl: string, rateLimit = 10): ConfigService<Environme
     JWT_PRIVATE_KEY_B64: Buffer.from('unused-private-key').toString('base64'),
     JWT_PUBLIC_KEY_B64: Buffer.from('unused-public-key').toString('base64'),
     JWT_KEY_ID: 'rsvp-integration-key',
+    TICKET_SIGNING_PRIVATE_KEY_B64: Buffer.from(
+      ticketKeys.current.privateKey.export({ format: 'der', type: 'pkcs8' }),
+    ).toString('base64'),
+    TICKET_SIGNING_PUBLIC_KEY_B64: Buffer.from(
+      ticketKeys.current.publicKey.export({ format: 'der', type: 'spki' }),
+    ).toString('base64'),
+    TICKET_SIGNING_KEY_ID: ticketKeys.currentKeyId,
+    ...previousKeyConfig,
     JWT_ISSUER: 'https://api.uneventful.test',
     JWT_AUDIENCE: 'uneventful-api',
     REFRESH_TOKEN_TTL_DAYS: 30,
@@ -87,6 +131,7 @@ let categoryId: string;
 let startAt: Date;
 let endAt: Date;
 let activePrisma: PrismaService;
+let ticketSigner: TicketSigningService;
 const principals = new Map<string, AuthPrincipal>();
 
 Reflect.defineMetadata(
@@ -110,6 +155,41 @@ Reflect.defineMetadata(
   'design:paramtypes',
   [RsvpsService, AuthRateLimitService, ConfigService],
   RsvpsController,
+);
+Reflect.defineMetadata(
+  'design:paramtypes',
+  [Object, String, CheckinManifestQueryDto],
+  CheckinsController.prototype,
+  'getManifest',
+);
+Reflect.defineMetadata(
+  'design:paramtypes',
+  [Object, String, CheckinTicketDto],
+  CheckinsController.prototype,
+  'checkIn',
+);
+Reflect.defineMetadata(
+  'design:paramtypes',
+  [Object, String, SyncCheckinsDto],
+  CheckinsController.prototype,
+  'syncCheckins',
+);
+Reflect.defineMetadata(
+  'design:paramtypes',
+  [Object, String, ManualCheckinLookupDto],
+  CheckinsController.prototype,
+  'lookup',
+);
+Reflect.defineMetadata(
+  'design:paramtypes',
+  [Object, String, ManualCheckinDto],
+  CheckinsController.prototype,
+  'manualCheckIn',
+);
+Reflect.defineMetadata(
+  'design:paramtypes',
+  [CheckinsService, AuthRateLimitService, ConfigService],
+  CheckinsController,
 );
 
 const authStub = {
@@ -149,21 +229,39 @@ const authStub = {
 };
 
 @Module({
-  controllers: [AuthController, RsvpsController, MyRsvpsController],
+  controllers: [AuthController, RsvpsController, MyRsvpsController, CheckinsController],
   providers: [
     {
       provide: RsvpsRepository,
-      useFactory: () => new RsvpsRepository(activePrisma),
+      useFactory: (ticketSigning: TicketSigningService) =>
+        new RsvpsRepository(activePrisma, ticketSigning),
+      inject: [TicketSigningService],
     },
     {
       provide: RsvpsService,
       useFactory: (repo: RsvpsRepository) => new RsvpsService(repo),
       inject: [RsvpsRepository],
     },
+    {
+      provide: CheckinsRepository,
+      useFactory: (ticketSigning: TicketSigningService) =>
+        new CheckinsRepository(activePrisma, ticketSigning),
+      inject: [TicketSigningService],
+    },
+    {
+      provide: CheckinsService,
+      useFactory: (repo: CheckinsRepository) => new CheckinsService(repo),
+      inject: [CheckinsRepository],
+    },
     { provide: AuthRateLimitService, useFactory: () => rateLimitService },
     { provide: AuthService, useValue: authStub },
     { provide: GoogleOidcService, useValue: {} },
     { provide: ConfigService, useFactory: () => configFor(appDatabaseUrl!) },
+    {
+      provide: TicketSigningService,
+      useFactory: (config: ConfigService<Environment, true>) => new TicketSigningService(config),
+      inject: [ConfigService],
+    },
   ],
 })
 class RsvpHttpIntegrationModule {}
@@ -173,7 +271,8 @@ describe('RSVP PostgreSQL concurrency integration', () => {
     appPrisma = new PrismaService(configFor(appDatabaseUrl!));
     migrationPrisma = new PrismaService(configFor(migrationDatabaseUrl!));
     await Promise.all([appPrisma.$connect(), migrationPrisma.$connect()]);
-    repository = new RsvpsRepository(appPrisma);
+    ticketSigner = new TicketSigningService(configFor(appDatabaseUrl!));
+    repository = new RsvpsRepository(appPrisma, ticketSigner);
     activePrisma = appPrisma;
 
     const redis = new Redis(redisUrl!, { lazyConnect: true, maxRetriesPerRequest: 1 });
@@ -330,6 +429,13 @@ describe('RSVP PostgreSQL concurrency integration', () => {
       });
       const rsvpIds = rsvps.map((rsvp) => rsvp.id);
       if (rsvpIds.length > 0) {
+        const tickets = await migrationPrisma.ticket.findMany({
+          where: { rsvpId: { in: rsvpIds } },
+          select: { id: true },
+        });
+        await migrationPrisma.checkIn.deleteMany({
+          where: { ticketId: { in: tickets.map((ticket) => ticket.id) } },
+        });
         await migrationPrisma.ticket.deleteMany({ where: { rsvpId: { in: rsvpIds } } });
         await migrationPrisma.rsvp.deleteMany({ where: { id: { in: rsvpIds } } });
       }
@@ -352,6 +458,387 @@ describe('RSVP PostgreSQL concurrency integration', () => {
     await httpApp?.close();
     rateLimitService?.onModuleDestroy();
     await Promise.all([appPrisma?.$disconnect(), migrationPrisma?.$disconnect()]);
+  });
+
+  it('issues signed ticket IDs and does not reset a USED ticket during regeneration', async () => {
+    const rsvp = await createRsvpWithTicket(primaryEventId, studentId(0));
+    const claims = ticketSigner.verify(rsvp.ticketToken);
+    expect(claims).toMatchObject({
+      eventId: primaryEventId,
+      rsvpId: rsvp.id,
+      expiresAt: TicketSigningService.expiresAt(endAt).getTime(),
+    });
+    const ticket = await appPrisma.ticket.findUniqueOrThrow({ where: { rsvpId: rsvp.id } });
+    expect(ticket.ticketIdHash).toBe(TicketSigningService.hashTicketId(claims.ticketId));
+    expect(ticket.ticketIdHash).not.toBe(
+      createHash('sha256').update(rsvp.ticketToken).digest('hex'),
+    );
+
+    const issued = await requestAs(studentId(0), 'POST', `/events/${primaryEventId}/rsvp/ticket`);
+    expect(issued.status).toBe(201);
+    expect(issued.headers.get('cache-control')).toBe('private, no-store');
+    const regenerated: { token: string } = await issued.json();
+    expect(ticketSigner.verify(regenerated.token).ticketId).toBe(claims.ticketId);
+
+    const checkin = await requestAs(organizerId, 'POST', `/events/${primaryEventId}/checkins`, {
+      ticket: regenerated.token,
+      deviceId: randomUUID(),
+    });
+    expect(checkin.status).toBe(201);
+    await expect(checkin.json()).resolves.toMatchObject({ status: 'VALID' });
+    expect(await appPrisma.ticket.findUniqueOrThrow({ where: { rsvpId: rsvp.id } })).toMatchObject({
+      status: TicketStatus.USED,
+    });
+
+    const afterUse = await requestAs(studentId(0), 'POST', `/events/${primaryEventId}/rsvp/ticket`);
+    expect(afterUse.status).toBe(404);
+    expect(await appPrisma.ticket.findUniqueOrThrow({ where: { rsvpId: rsvp.id } })).toMatchObject({
+      status: TicketStatus.USED,
+    });
+  });
+
+  it('masks cancelled, waitlisted and unknown ticket requests identically', async () => {
+    const cancelledEventId = await createEvent(2);
+    await repository.rsvp(cancelledEventId, studentId(0), false);
+    await repository.cancel(cancelledEventId, studentId(0));
+    const waitlistedEventId = await createEvent(1);
+    await repository.rsvp(waitlistedEventId, studentId(2), false);
+    await repository.rsvp(waitlistedEventId, studentId(1), false);
+
+    const responses = await Promise.all([
+      requestAs(studentId(0), 'POST', `/events/${cancelledEventId}/rsvp/ticket`),
+      requestAs(studentId(1), 'POST', `/events/${waitlistedEventId}/rsvp/ticket`),
+      requestAs(studentId(2), 'POST', `/events/${randomUUID()}/rsvp/ticket`),
+    ]);
+    const results = await Promise.all(
+      responses.map(async (response) => ({
+        status: response.status,
+        headers: Object.fromEntries(
+          [...response.headers.entries()].filter(([name]) => name !== 'date'),
+        ),
+        body: await response.json(),
+      })),
+    );
+    expect(results[0]).toEqual(results[2]);
+    expect(results[1]).toEqual(results[2]);
+    expect(results[2]).toMatchObject({
+      status: 404,
+      body: { statusCode: 404, code: 'NOT_FOUND', message: 'Event not found.' },
+    });
+  });
+
+  it('checks one of fifty concurrent scans in and returns ALREADY_USED for every replay', async () => {
+    const rsvp = await createRsvpWithTicket(primaryEventId, studentId(0));
+    const responses = await Promise.all(
+      Array.from({ length: 50 }, () =>
+        requestAs(organizerId, 'POST', `/events/${primaryEventId}/checkins`, {
+          ticket: rsvp.ticketToken,
+          deviceId: randomUUID(),
+        }),
+      ),
+    );
+    const bodies = await Promise.all(responses.map((response) => response.json()));
+
+    expect(responses.every((response) => response.status === 201)).toBe(true);
+    expect(bodies.filter((body) => body.status === 'VALID')).toHaveLength(1);
+    expect(bodies.filter((body) => body.status === 'ALREADY_USED')).toHaveLength(49);
+    expect(
+      await appPrisma.ticket.count({
+        where: { rsvpId: rsvp.id, status: TicketStatus.USED },
+      }),
+    ).toBe(1);
+    expect(await appPrisma.checkIn.count({ where: { ticket: { rsvpId: rsvp.id } } })).toBe(1);
+    const ticketId = (await appPrisma.ticket.findUniqueOrThrow({ where: { rsvpId: rsvp.id } })).id;
+    expect(
+      await appPrisma.auditLog.count({ where: { entityId: ticketId, action: 'CHECKIN_QR' } }),
+    ).toBe(1);
+    expect(
+      await appPrisma.auditLog.count({
+        where: { entityId: ticketId, action: 'CHECKIN_QR_DUPLICATE' },
+      }),
+    ).toBe(49);
+  });
+
+  it('accepts tickets signed by the previous public key during rotation', async () => {
+    const rsvp = await createRsvpWithTicket(primaryEventId, studentId(0));
+    const claims = ticketSigner.verify(rsvp.ticketToken);
+    const previousSigner = new TicketSigningService(
+      configFor(appDatabaseUrl!, 10, {
+        current: previousTicketSigningKeys,
+        currentKeyId: 'rsvp-integration-previous-key',
+      }),
+    );
+    const previousKeyTicket = previousSigner.issue(
+      {
+        ticketId: claims.ticketId,
+        eventId: claims.eventId,
+        rsvpId: claims.rsvpId,
+      },
+      new Date(claims.expiresAt),
+    );
+
+    const response = await requestAs(organizerId, 'POST', `/events/${primaryEventId}/checkins`, {
+      ticket: previousKeyTicket,
+      deviceId: randomUUID(),
+    });
+
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({ status: 'VALID' });
+  });
+
+  it('rejects forged, wrong-event, expired and wrong-kid tickets with masked 404 responses', async () => {
+    const first = await createRsvpWithTicket(primaryEventId, studentId(0));
+    const otherEventId = await createEvent(2);
+    const second = await createRsvpWithTicket(otherEventId, studentId(1));
+    const wrongEvent = await requestAs(organizerId, 'POST', `/events/${primaryEventId}/checkins`, {
+      ticket: second.ticketToken,
+      deviceId: randomUUID(),
+    });
+    const tampered = `${first.ticketToken.slice(0, -1)}${first.ticketToken.endsWith('A') ? 'B' : 'A'}`;
+    const forged = await requestAs(organizerId, 'POST', `/events/${primaryEventId}/checkins`, {
+      ticket: tampered,
+      deviceId: randomUUID(),
+    });
+    const unknownKid = `${Buffer.from(
+      JSON.stringify({ alg: 'EdDSA', typ: 'JWT', kid: 'unknown-ticket-key' }),
+    ).toString('base64url')}.${first.ticketToken.split('.')[1]}.${first.ticketToken.split('.')[2]}`;
+    const wrongKey = await requestAs(organizerId, 'POST', `/events/${primaryEventId}/checkins`, {
+      ticket: unknownKid,
+      deviceId: randomUUID(),
+    });
+    const hiddenEvent = await createEvent(2);
+    const hidden = await createRsvpWithTicket(hiddenEvent, studentId(2));
+    await appPrisma.event.update({ where: { id: hiddenEvent }, data: { isPublic: false } });
+    const hiddenTicket = await requestAs(organizerId, 'POST', `/events/${hiddenEvent}/checkins`, {
+      ticket: hidden.ticketToken,
+      deviceId: randomUUID(),
+    });
+
+    for (const response of [wrongEvent, forged, wrongKey, hiddenTicket]) {
+      expect(response.status).toBe(404);
+      await expect(response.json()).resolves.toMatchObject({
+        statusCode: 404,
+        code: 'NOT_FOUND',
+        message: 'Event not found.',
+      });
+    }
+
+    await appPrisma.ticket.update({
+      where: { rsvpId: first.id },
+      data: { expiresAt: new Date(Date.now() - 1) },
+    });
+    const expiredToken = ticketSigner.issue(
+      {
+        ticketId: ticketSigner.verify(first.ticketToken).ticketId,
+        eventId: primaryEventId,
+        rsvpId: first.id,
+      },
+      new Date(Date.now() - 1),
+    );
+    const expired = await requestAs(organizerId, 'POST', `/events/${primaryEventId}/checkins`, {
+      ticket: expiredToken,
+      deviceId: randomUUID(),
+    });
+    expect(expired.status).toBe(404);
+    await expect(expired.json()).resolves.toMatchObject({
+      statusCode: 404,
+      code: 'NOT_FOUND',
+      message: 'Event not found.',
+    });
+  });
+
+  it('syncs offline scans idempotently and returns per-item invalid and wrong-event results', async () => {
+    const valid = await createRsvpWithTicket(primaryEventId, studentId(0));
+    const otherEventId = await createEvent(2);
+    const other = await createRsvpWithTicket(otherEventId, studentId(1));
+    const validClaims = ticketSigner.verify(valid.ticketToken);
+    const otherClaims = ticketSigner.verify(other.ticketToken);
+    const scannedAt = new Date().toISOString();
+    const scan = {
+      ticketIdHash: TicketSigningService.hashTicketId(validClaims.ticketId),
+      deviceId: randomUUID(),
+      scannedAt,
+    };
+    const batch = {
+      scans: [
+        scan,
+        { ...scan, deviceId: randomUUID() },
+        { ticketIdHash: 'a'.repeat(64), deviceId: randomUUID(), scannedAt },
+        {
+          ticketIdHash: TicketSigningService.hashTicketId(otherClaims.ticketId),
+          deviceId: randomUUID(),
+          scannedAt,
+        },
+      ],
+    };
+    const response = await requestAs(
+      organizerId,
+      'POST',
+      `/events/${primaryEventId}/checkins/sync`,
+      batch,
+    );
+    expect(response.status).toBe(201);
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
+    await expect(response.json()).resolves.toMatchObject({
+      data: [
+        { status: 'VALID' },
+        { status: 'DUPLICATE' },
+        { status: 'INVALID' },
+        { status: 'WRONG_EVENT' },
+      ],
+    });
+
+    const repeated = await requestAs(
+      organizerId,
+      'POST',
+      `/events/${primaryEventId}/checkins/sync`,
+      { scans: [scan] },
+    );
+    await expect(repeated.json()).resolves.toMatchObject({
+      data: [{ status: 'DUPLICATE', checkedInAt: expect.any(String) }],
+    });
+    expect(
+      await appPrisma.auditLog.count({
+        where: { action: 'CHECKIN_OFFLINE_SCAN_SYNCED', entityId: primaryEventId },
+      }),
+    ).toBe(5);
+    expect(await appPrisma.ticket.findUniqueOrThrow({ where: { rsvpId: valid.id } })).toMatchObject(
+      {
+        status: TicketStatus.USED,
+      },
+    );
+
+    const tooMany = await requestAs(
+      organizerId,
+      'POST',
+      `/events/${primaryEventId}/checkins/sync`,
+      { scans: Array.from({ length: 51 }, () => scan) },
+    );
+    expect(tooMany.status).toBe(400);
+  });
+
+  it('provides a bounded no-store manifest and audited allowlisted manual lookup', async () => {
+    await createRsvpWithTicket(primaryEventId, studentId(0));
+    const manifestResponse = await requestAs(
+      organizerId,
+      'GET',
+      `/events/${primaryEventId}/checkin-manifest?limit=1`,
+    );
+    expect(manifestResponse.status).toBe(200);
+    expect(manifestResponse.headers.get('cache-control')).toBe('private, no-store');
+    const manifest = await manifestResponse.json();
+    expect(manifest.data).toHaveLength(1);
+    expect(manifest.publicKeys.keys[0]).toMatchObject({
+      kid: 'rsvp-integration-ticket-key',
+      publicKey: expect.any(String),
+    });
+    expect(Object.keys(manifest.data[0]).sort()).toEqual(['status', 'ticketIdHash']);
+    expect(JSON.stringify(manifest)).not.toMatch(/rsvpId|userId|token|email/i);
+    expect(manifest.nextCursor).toBeUndefined();
+
+    const lookup = await requestAs(
+      organizerId,
+      'GET',
+      `/events/${primaryEventId}/checkins/lookup?q=Student0`,
+    );
+    expect(lookup.status).toBe(200);
+    expect(lookup.headers.get('cache-control')).toBe('private, no-store');
+    const lookupBody = await lookup.json();
+    expect(lookupBody.data).toEqual([
+      expect.objectContaining({ displayName: 'Student0 Integration', status: RsvpStatus.GOING }),
+    ]);
+    expect(Object.keys(lookupBody.data[0]).sort()).toEqual([
+      'checkedInAt',
+      'displayName',
+      'rsvpId',
+      'status',
+    ]);
+    const manual = await requestAs(
+      organizerId,
+      'POST',
+      `/events/${primaryEventId}/checkins/manual`,
+      {
+        rsvpId: lookupBody.data[0].rsvpId,
+        deviceId: randomUUID(),
+      },
+    );
+    expect(manual.status).toBe(201);
+    await expect(manual.json()).resolves.toMatchObject({ status: 'VALID' });
+
+    expect(
+      await appPrisma.auditLog.count({
+        where: {
+          actorId: organizerId,
+          entityId: primaryEventId,
+          action: { in: ['CHECKIN_MANIFEST_DOWNLOADED', 'CHECKIN_ATTENDEE_LOOKUP'] },
+        },
+      }),
+    ).toBe(2);
+    expect(
+      await appPrisma.auditLog.count({
+        where: { actorId: organizerId, action: 'CHECKIN_MANUAL', entityId: { not: null } },
+      }),
+    ).toBe(1);
+  });
+
+  it('masks every check-in route from students and organizers outside the event club', async () => {
+    const rsvp = await createRsvpWithTicket(primaryEventId, studentId(0));
+    const claims = ticketSigner.verify(rsvp.ticketToken);
+    const body = { ticket: rsvp.ticketToken, deviceId: randomUUID() };
+    const routes: Array<{ method: 'GET' | 'POST'; path: string; body?: unknown }> = [
+      { method: 'GET', path: `/events/${primaryEventId}/checkin-manifest` },
+      { method: 'POST', path: `/events/${primaryEventId}/checkins`, body },
+      {
+        method: 'POST',
+        path: `/events/${primaryEventId}/checkins/sync`,
+        body: {
+          scans: [
+            {
+              ticketIdHash: TicketSigningService.hashTicketId(claims.ticketId),
+              deviceId: randomUUID(),
+              scannedAt: new Date().toISOString(),
+            },
+          ],
+        },
+      },
+      { method: 'GET', path: `/events/${primaryEventId}/checkins/lookup?q=Student0` },
+      {
+        method: 'POST',
+        path: `/events/${primaryEventId}/checkins/manual`,
+        body: { rsvpId: rsvp.id, deviceId: randomUUID() },
+      },
+    ];
+
+    for (const route of routes) {
+      const responses = await Promise.all([
+        requestAs(studentId(1), route.method, route.path, route.body),
+        requestAs(otherOrganizerId, route.method, route.path, route.body),
+      ]);
+      const payloads = await Promise.all(
+        responses.map(async (response) => ({
+          status: response.status,
+          headers: Object.fromEntries(
+            [...response.headers.entries()].filter(([name]) => name !== 'date'),
+          ),
+          body: await response.json(),
+        })),
+      );
+      expect(payloads[0]).toEqual(payloads[1]);
+      expect(payloads[0]).toMatchObject({
+        status: 404,
+        body: { statusCode: 404, code: 'NOT_FOUND', message: 'Event not found.' },
+      });
+    }
+  });
+
+  it('enforces the per-user check-in rate limit with Retry-After', async () => {
+    const userId = studentId(199);
+    for (let count = 0; count < 120; count += 1) {
+      await rateLimitService.consume('checkin-user', userId, 120, 60_000);
+    }
+    const response = await requestAs(userId, 'GET', `/events/${primaryEventId}/checkin-manifest`);
+    expect(response.status).toBe(429);
+    expect(response.headers.get('retry-after')).toBe('60');
   });
 
   it('admits exactly 50 of 200 simultaneous RSVPs at capacity 50', async () => {
@@ -427,7 +914,7 @@ describe('RSVP PostgreSQL concurrency integration', () => {
     const firstTicket = await appPrisma.ticket.findUniqueOrThrow({
       where: { rsvpId: first.id },
     });
-    expect(firstTicket.tokenHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(firstTicket.ticketIdHash).toMatch(/^[a-f0-9]{64}$/);
     expect(await repository.cancel(primaryEventId, studentId(0))).toMatchObject({
       status: RsvpStatus.CANCELLED,
     });
@@ -470,7 +957,15 @@ describe('RSVP PostgreSQL concurrency integration', () => {
       where: { rsvpId: promotedWaiter.id },
     });
     expect(promotedTicket.status).toBe(TicketStatus.ISSUED);
-    expect(promotedTicket.tokenHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(promotedTicket.ticketIdHash).toMatch(/^[a-f0-9]{64}$/);
+    const promotedTokenResponse = await requestAs(
+      studentId(2),
+      'POST',
+      `/events/${primaryEventId}/rsvp/ticket`,
+    );
+    expect(promotedTokenResponse.status).toBe(201);
+    const promotedToken: { token: string } = await promotedTokenResponse.json();
+    expect(ticketSigner.verify(promotedToken.token).rsvpId).toBe(promotedWaiter.id);
     expect(
       await appPrisma.rsvp.findUniqueOrThrow({
         where: { eventId_userId: { eventId: primaryEventId, userId: studentId(3) } },
@@ -561,7 +1056,9 @@ describe('RSVP PostgreSQL concurrency integration', () => {
       }),
     ).toMatchObject({ processedAt: null });
 
-    const restartedWorker = new RsvpPromotionProcessor(new RsvpsRepository(appPrisma));
+    const restartedWorker = new RsvpPromotionProcessor(
+      new RsvpsRepository(appPrisma, new TicketSigningService(configFor(appDatabaseUrl!))),
+    );
     await restartedWorker.process(job);
     await restartedWorker.process(job);
 
@@ -583,7 +1080,7 @@ describe('RSVP PostgreSQL concurrency integration', () => {
       where: { rsvpId: firstWaiter.id },
     });
     expect(promotedTicket).toMatchObject({ status: TicketStatus.ISSUED });
-    expect(promotedTicket.tokenHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(promotedTicket.ticketIdHash).toMatch(/^[a-f0-9]{64}$/);
     expect(
       await appPrisma.notification.count({
         where: { dedupeKey: `rsvp-promoted:${outbox.id}` },
@@ -1363,6 +1860,28 @@ async function createEvent(
   });
   eventIds.push(id);
   return id;
+}
+
+async function createRsvpWithTicket(
+  eventId: string,
+  userId: string,
+): Promise<{ id: string; ticketToken: string }> {
+  const response = await requestAs(userId, 'POST', `/events/${eventId}/rsvp`, {});
+  if (!response.ok) {
+    throw new Error(`RSVP fixture creation failed with HTTP ${response.status}.`);
+  }
+  const body: unknown = await response.json();
+  if (
+    typeof body !== 'object' ||
+    body === null ||
+    !('id' in body) ||
+    typeof body.id !== 'string' ||
+    !('ticketToken' in body) ||
+    typeof body.ticketToken !== 'string'
+  ) {
+    throw new Error('RSVP fixture did not return a signed ticket.');
+  }
+  return { id: body.id, ticketToken: body.ticketToken };
 }
 
 function requestAs(

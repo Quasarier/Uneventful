@@ -8,10 +8,14 @@ import { DatabaseModule } from '../database/database.module';
 import { RsvpPromotionOutboxDispatcher } from './rsvp-promotion-outbox.dispatcher';
 import { RsvpPromotionProcessor } from './rsvp-promotion.processor';
 import { RSVP_PROMOTION_QUEUE } from './rsvp-queue.constants';
+import { CheckinsController } from './checkins.controller';
+import { CheckinsRepository } from './checkins.repository';
+import { CheckinsService } from './checkins.service';
 import { MyRsvpsController } from './my-rsvps.controller';
 import { RsvpsController } from './rsvps.controller';
 import { RsvpsRepository } from './rsvps.repository';
 import { RsvpsService } from './rsvps.service';
+import { TicketSigningService } from './ticket-signing.service';
 
 function redisConnection(redisUrl: string) {
   const url = new URL(redisUrl);
@@ -41,7 +45,15 @@ function redisConnection(redisUrl: string) {
     }),
     BullModule.registerQueue({ name: RSVP_PROMOTION_QUEUE }),
   ],
-  controllers: [RsvpsController, MyRsvpsController],
-  providers: [RsvpsRepository, RsvpsService, RsvpPromotionProcessor, RsvpPromotionOutboxDispatcher],
+  controllers: [RsvpsController, MyRsvpsController, CheckinsController],
+  providers: [
+    RsvpsRepository,
+    RsvpsService,
+    CheckinsRepository,
+    CheckinsService,
+    TicketSigningService,
+    RsvpPromotionProcessor,
+    RsvpPromotionOutboxDispatcher,
+  ],
 })
 export class RsvpsModule {}

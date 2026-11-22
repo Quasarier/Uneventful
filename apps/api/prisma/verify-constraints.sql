@@ -16,8 +16,10 @@ DECLARE
     deleted_event_id UUID := gen_random_uuid();
     deleted_event_replacement_id UUID := gen_random_uuid();
     rsvp_id UUID := gen_random_uuid();
+    duplicate_rsvp_id UUID := gen_random_uuid();
     audit_id UUID := gen_random_uuid();
     v_start_at TIMESTAMPTZ := '2035-02-01 10:00:00+00';
+    ticket_status_values TEXT[];
 BEGIN
     IF current_user <> 'uneventful_app' THEN
         RAISE EXCEPTION 'Constraint checks must run as uneventful_app, not %.', current_user;
@@ -123,6 +125,8 @@ BEGIN
 
     INSERT INTO rsvps (id, event_id, user_id, status)
     VALUES (rsvp_id, event_one_id, student_id, 'GOING');
+    INSERT INTO rsvps (id, event_id, user_id, status)
+    VALUES (duplicate_rsvp_id, event_two_id, student_id, 'GOING');
 
     BEGIN
         INSERT INTO rsvps (id, event_id, user_id, status)
@@ -186,9 +190,49 @@ BEGIN
         WHEN check_violation THEN NULL;
     END;
 
+    SELECT array_agg(e.enumlabel::text ORDER BY e.enumsortorder)
+    INTO ticket_status_values
+    FROM pg_enum AS e
+    JOIN pg_type AS t ON t.oid = e.enumtypid
+    JOIN pg_namespace AS n ON n.oid = t.typnamespace
+    WHERE n.nspname = 'public'
+      AND t.typname = 'ticket_status';
+
+    IF ticket_status_values IS DISTINCT FROM ARRAY['ISSUED', 'REVOKED', 'USED']::TEXT[] THEN
+        RAISE EXCEPTION 'Unexpected ticket_status values: %.', ticket_status_values;
+    END IF;
+
+    INSERT INTO tickets (id, rsvp_id, ticket_id_hash, expires_at, created_at)
+    VALUES (
+        gen_random_uuid(), rsvp_id, repeat('a', 64),
+        v_start_at + INTERVAL '1 hour', v_start_at
+    );
+
     BEGIN
-        INSERT INTO tickets (id, rsvp_id, token_hash, expires_at, created_at)
-        VALUES (gen_random_uuid(), rsvp_id, repeat('a', 64), v_start_at, v_start_at);
+        INSERT INTO tickets (id, rsvp_id, ticket_id_hash, expires_at, created_at)
+        VALUES (
+            gen_random_uuid(), duplicate_rsvp_id, repeat('a', 64),
+            v_start_at + INTERVAL '1 hour', v_start_at
+        );
+        RAISE EXCEPTION 'Expected a duplicate ticket ID hash to be rejected.';
+    EXCEPTION
+        WHEN unique_violation THEN NULL;
+    END;
+
+    BEGIN
+        INSERT INTO tickets (id, rsvp_id, ticket_id_hash, status, expires_at, created_at)
+        VALUES (
+            gen_random_uuid(), duplicate_rsvp_id, repeat('c', 64), 'INVALID',
+            v_start_at + INTERVAL '1 hour', v_start_at
+        );
+        RAISE EXCEPTION 'Expected an invalid ticket status to be rejected.';
+    EXCEPTION
+        WHEN invalid_text_representation THEN NULL;
+    END;
+
+    BEGIN
+        INSERT INTO tickets (id, rsvp_id, ticket_id_hash, expires_at, created_at)
+        VALUES (gen_random_uuid(), duplicate_rsvp_id, repeat('d', 64), v_start_at, v_start_at);
         RAISE EXCEPTION 'Expected a ticket that expires at creation time to be rejected.';
     EXCEPTION
         WHEN check_violation THEN NULL;
@@ -231,6 +275,20 @@ BEGIN
     BEGIN
         ALTER TABLE audit_logs ADD COLUMN app_role_ddl_probe INTEGER;
         RAISE EXCEPTION 'Expected application-role ALTER TABLE to be rejected.';
+    EXCEPTION
+        WHEN insufficient_privilege THEN NULL;
+    END;
+
+    BEGIN
+        ALTER TABLE tickets ADD COLUMN app_role_ddl_probe INTEGER;
+        RAISE EXCEPTION 'Expected application-role ALTER TABLE tickets to be rejected.';
+    EXCEPTION
+        WHEN insufficient_privilege THEN NULL;
+    END;
+
+    BEGIN
+        DROP TABLE tickets;
+        RAISE EXCEPTION 'Expected application-role DROP TABLE tickets to be rejected.';
     EXCEPTION
         WHEN insufficient_privilege THEN NULL;
     END;

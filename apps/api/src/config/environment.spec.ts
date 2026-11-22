@@ -17,6 +17,9 @@ const validEnvironment = {
   JWT_PRIVATE_KEY_B64: Buffer.from('test-private-key').toString('base64'),
   JWT_PUBLIC_KEY_B64: Buffer.from('test-public-key').toString('base64'),
   JWT_KEY_ID: 'test-key',
+  TICKET_SIGNING_PRIVATE_KEY_B64: Buffer.from('test-ticket-private-key').toString('base64'),
+  TICKET_SIGNING_PUBLIC_KEY_B64: Buffer.from('test-ticket-public-key').toString('base64'),
+  TICKET_SIGNING_KEY_ID: 'test-ticket-key',
   JWT_ISSUER: 'https://api.uneventful.test',
   JWT_AUDIENCE: 'uneventful-api',
   REFRESH_TOKEN_TTL_DAYS: '30',
@@ -26,6 +29,7 @@ describe('validateEnvironment', () => {
   it('parses valid configuration and coerces the port', () => {
     expect(validateEnvironment(validEnvironment).PORT).toBe(3001);
     expect(validateEnvironment(validEnvironment).RSVP_RATE_LIMIT_PER_MINUTE).toBe(10);
+    expect(validateEnvironment(validEnvironment).CHECKIN_RATE_LIMIT_PER_MINUTE).toBe(120);
   });
 
   it('fails when required keys are missing', () => {
@@ -169,5 +173,22 @@ describe('validateEnvironment', () => {
         JWT_PREVIOUS_PUBLIC_KEY_B64: Buffer.from('previous-public-key').toString('base64'),
       }),
     ).toThrow(/JWT_PREVIOUS_KEY_ID/);
+  });
+
+  it('requires previous ticket key metadata as a distinct pair', () => {
+    expect(() =>
+      validateEnvironment({
+        ...validEnvironment,
+        TICKET_SIGNING_PREVIOUS_KEY_ID: 'previous-ticket-key',
+      }),
+    ).toThrow(/TICKET_SIGNING_PREVIOUS_KEY_ID/);
+    expect(() =>
+      validateEnvironment({
+        ...validEnvironment,
+        TICKET_SIGNING_PREVIOUS_KEY_ID: 'test-ticket-key',
+        TICKET_SIGNING_PREVIOUS_PUBLIC_KEY_B64:
+          Buffer.from('previous-public-key').toString('base64'),
+      }),
+    ).toThrow(/TICKET_SIGNING_PREVIOUS_KEY_ID/);
   });
 });

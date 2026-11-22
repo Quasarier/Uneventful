@@ -10,6 +10,7 @@ import {
   useState,
 } from 'react';
 import { API_BASE_URL } from '@/lib/auth-config';
+import { clearAllCheckinData } from '@/lib/checkin-storage';
 import type { components } from '@/lib/api-schema';
 
 interface ApiSession {
@@ -34,10 +35,14 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 const AUTH_CHANNEL_NAME = 'uneventful-auth';
 
 async function clearApplicationCaches(): Promise<void> {
-  if (typeof window === 'undefined' || !('caches' in window)) {
+  if (typeof window === 'undefined') {
     return;
   }
 
+  await clearAllCheckinData();
+  if (!('caches' in window)) {
+    return;
+  }
   const cacheNames = await window.caches.keys();
   await Promise.all(
     cacheNames
@@ -69,6 +74,9 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
   }, []);
 
   const clearSession = useCallback(() => {
+    void clearAllCheckinData().catch(() => {
+      console.error('Unable to clear offline check-in data after session termination.');
+    });
     accessTokenRef.current = null;
     expiresAtRef.current = 0;
     setAccessToken(null);

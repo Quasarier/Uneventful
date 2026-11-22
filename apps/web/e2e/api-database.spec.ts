@@ -265,8 +265,178 @@ test('uploads and renders a real event image without CSP or COEP errors', async 
   expect(cleanupFailure).toBeNull();
 });
 
+test('scans tickets online and offline, syncs queued hashes, and clears local data on logout', async ({
+  browser,
+  request,
+}) => {
+  const fixtureResponse = await request.post(`${apiBaseUrl}/__test/e2e/fixtures`, {
+    headers: { 'x-uneventful-e2e-secret': bypassSecret },
+  });
+  expect(fixtureResponse.status()).toBe(201);
+  const fixture: { fixtureId: string; eventId: string; title: string } =
+    await fixtureResponse.json();
+  const studentContext = await browser.newContext();
+  const organizerContext = await browser.newContext();
+
+  try {
+    for (const [context, user] of [
+      [studentContext, 'first'],
+      [organizerContext, 'organizer'],
+    ] as const) {
+      const sessionResponse = await context.request.post(
+        `${apiBaseUrl}/__test/e2e/fixtures/${fixture.fixtureId}/session`,
+        {
+          headers: { 'x-uneventful-e2e-secret': bypassSecret },
+          data: { user },
+        },
+      );
+      expect(sessionResponse.status()).toBe(204);
+    }
+
+    const studentRefresh = await studentContext.request.post(`${apiBaseUrl}/auth/refresh`, {
+      headers: { Origin: webOrigin, 'X-Uneventful-CSRF': '1' },
+    });
+    expect(studentRefresh.status()).toBe(200);
+    const studentSession: { accessToken: string } = await studentRefresh.json();
+    const rsvpResponse = await studentContext.request.post(
+      `${apiBaseUrl}/events/${fixture.eventId}/rsvp`,
+      { headers: { Authorization: `Bearer ${studentSession.accessToken}` }, data: {} },
+    );
+    const rsvpText = await rsvpResponse.text();
+    expect(rsvpResponse.status(), rsvpText).toBe(201);
+    const rsvp: { ticketToken?: string } = JSON.parse(rsvpText);
+    expect(rsvp.ticketToken).toBeTruthy();
+
+    const organizerRefresh = await organizerContext.request.post(`${apiBaseUrl}/auth/refresh`, {
+      headers: { Origin: webOrigin, 'X-Uneventful-CSRF': '1' },
+    });
+    expect(organizerRefresh.status()).toBe(200);
+    const organizerSession: { accessToken: string } = await organizerRefresh.json();
+
+    const page = await organizerContext.newPage();
+    await page.addInitScript(() => {
+      window.__qrTicketToken = '';
+      class TestBarcodeDetector {
+        async detect() {
+          return window.__qrTicketToken ? [{ rawValue: window.__qrTicketToken }] : [];
+        }
+      }
+      Object.defineProperty(window, 'BarcodeDetector', {
+        configurable: true,
+        value: TestBarcodeDetector,
+      });
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: { getUserMedia: async () => new MediaStream() },
+      });
+      Object.defineProperty(HTMLMediaElement.prototype, 'play', {
+        configurable: true,
+        value: () => Promise.resolve(),
+      });
+      Object.defineProperty(HTMLVideoElement.prototype, 'readyState', {
+        configurable: true,
+        get: () => HTMLMediaElement.HAVE_CURRENT_DATA,
+      });
+    });
+    const manifestResponse = page.waitForResponse(
+      (response) =>
+        response.url().endsWith(`/events/${fixture.eventId}/checkin-manifest`) &&
+        response.status() === 200,
+    );
+    await page.goto(`/events/${fixture.eventId}/scanner`);
+    await manifestResponse;
+    await expect(page.getByText(/0 offline scans queued/)).toBeVisible();
+    await page.evaluate((token) => {
+      window.__qrTicketToken = token;
+    }, rsvp.ticketToken!);
+
+    const onlineCheckin = await page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' &&
+        response.url().endsWith(`/events/${fixture.eventId}/checkins`),
+    );
+    await expect(page.getByText('VALID', { exact: true })).toBeVisible();
+    expect(onlineCheckin.status()).toBe(201);
+
+    await page.context().setOffline(true);
+    await page.getByRole('button', { name: 'Scan another' }).click();
+    await expect(page.getByText(/1 offline scan queued/)).toBeVisible();
+    const persistedOfflineData = await page.evaluate(
+      () =>
+        new Promise<string>((resolve, reject) => {
+          const request = indexedDB.open('uneventful-checkin', 1);
+          request.onerror = () => reject(new Error('Could not inspect scanner storage.'));
+          request.onsuccess = () => {
+            const database = request.result;
+            const transaction = database.transaction(['manifests', 'scans'], 'readonly');
+            const manifests = transaction.objectStore('manifests').getAll();
+            const scans = transaction.objectStore('scans').getAll();
+            transaction.oncomplete = () => {
+              resolve(JSON.stringify({ manifests: manifests.result, scans: scans.result }));
+              database.close();
+            };
+          };
+        }),
+    );
+    expect(persistedOfflineData).toContain('ticketIdHash');
+    expect(persistedOfflineData).not.toContain(rsvp.ticketToken!);
+    expect(persistedOfflineData).not.toContain(organizerSession.accessToken);
+
+    const syncResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' &&
+        response.url().endsWith(`/events/${fixture.eventId}/checkins/sync`),
+    );
+    await page.context().setOffline(false);
+    expect((await syncResponse).status()).toBe(201);
+    await expect(page.getByText('ALREADY USED', { exact: true })).toBeVisible();
+    await expect(page.getByText(/0 offline scans queued/)).toBeVisible();
+
+    await page.route(`**/events/${fixture.eventId}/checkins/sync`, (route) => route.abort());
+    await page.context().setOffline(true);
+    await page.getByRole('button', { name: 'Scan another' }).click();
+    await expect(page.getByText(/1 offline scan queued/)).toBeVisible();
+    const blockedSync = page.waitForEvent('requestfailed', {
+      predicate: (failedRequest) =>
+        failedRequest.method() === 'POST' &&
+        failedRequest.url().endsWith(`/events/${fixture.eventId}/checkins/sync`),
+    });
+    await page.context().setOffline(false);
+    await blockedSync;
+    await expect(page.getByText(/1 offline scan queued/)).toBeVisible();
+    await page.getByRole('button', { name: 'Sign out' }).click();
+    await expect(page).toHaveURL(/\/login$/);
+    const localCounts = await page.evaluate(
+      () =>
+        new Promise<{ manifests: number; scans: number }>((resolve, reject) => {
+          const request = indexedDB.open('uneventful-checkin', 1);
+          request.onerror = () => reject(new Error('Could not verify scanner storage cleanup.'));
+          request.onsuccess = () => {
+            const database = request.result;
+            const transaction = database.transaction(['manifests', 'scans'], 'readonly');
+            const manifests = transaction.objectStore('manifests').count();
+            const scans = transaction.objectStore('scans').count();
+            transaction.oncomplete = () => {
+              resolve({ manifests: manifests.result, scans: scans.result });
+              database.close();
+            };
+          };
+        }),
+    );
+    expect(localCounts).toEqual({ manifests: 0, scans: 0 });
+  } finally {
+    await Promise.all([studentContext.close(), organizerContext.close()]);
+    const cleanupResponse = await request.delete(
+      `${apiBaseUrl}/__test/e2e/fixtures/${fixture.fixtureId}`,
+      { headers: { 'x-uneventful-e2e-secret': bypassSecret } },
+    );
+    expect(cleanupResponse.status(), await cleanupResponse.text()).toBe(204);
+  }
+});
+
 declare global {
   interface Window {
     __imageCspViolations: string[];
+    __qrTicketToken: string;
   }
 }

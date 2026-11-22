@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { RsvpStatus, TicketStatus } from '../../generated/prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { RsvpsRepository } from './rsvps.repository';
+import { TicketSigningService } from './ticket-signing.service';
 
 describe('RsvpsRepository', () => {
   it('returns only the caller RSVP details and safe ticket metadata', async () => {
@@ -47,7 +48,10 @@ describe('RsvpsRepository', () => {
         ]),
       },
     };
-    const repository = new RsvpsRepository(database as unknown as PrismaService);
+    const repository = new RsvpsRepository(
+      database as unknown as PrismaService,
+      { issue: vi.fn() } as unknown as TicketSigningService,
+    );
 
     const result = await repository.listMine(userId);
 
