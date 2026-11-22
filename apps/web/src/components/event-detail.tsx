@@ -182,6 +182,12 @@ export function EventDetail({ eventId }: Readonly<{ eventId: string }>) {
           {formatEventDate(event.startAt, event.timeZone)} –{' '}
           {formatEventDate(event.endAt, event.timeZone)}
         </p>
+        {event.venue && (
+          <p className="mt-3 text-sm text-white/80">
+            Location: {event.venue.name}
+            {event.venue.building ? ` · ${event.venue.building}` : ''}
+          </p>
+        )}
         {event.capacity !== null && (
           <p className="mt-3 text-sm text-white/80">
             {rsvp
