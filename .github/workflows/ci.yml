@@ -158,7 +158,7 @@ jobs:
             );
             const testCount = count(report.suites);
             console.log(`Playwright test count: ${testCount}`);
-            const minimumTestCount = 22;
+            const minimumTestCount = 25;
             if (testCount < minimumTestCount) {
               console.error(`Playwright suite ran ${testCount} tests; minimum is ${minimumTestCount}.`);
               process.exit(1);
@@ -229,7 +229,7 @@ jobs:
           ' "$results"
 
           # Raise this threshold whenever integration tests are added.
-          minimum_test_count=59
+          minimum_test_count=68
           if (( test_count < minimum_test_count )); then
             echo "The API integration suite ran $test_count tests; minimum is $minimum_test_count." >&2
             exit 1
