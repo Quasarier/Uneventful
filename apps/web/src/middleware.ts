@@ -47,6 +47,13 @@ export function middleware(request: NextRequest) {
     production ? 'Content-Security-Policy' : 'Content-Security-Policy-Report-Only',
     policy,
   );
+  const isScannerRoute = /^\/events\/[^/]+\/scanner\/?$/.test(request.nextUrl.pathname);
+  response.headers.set(
+    'Permissions-Policy',
+    isScannerRoute
+      ? 'camera=(self), microphone=(), geolocation=()'
+      : 'camera=(), microphone=(), geolocation=()',
+  );
   if (request.nextUrl.pathname === '/auth/popup') {
     response.headers.set('Cross-Origin-Opener-Policy', 'unsafe-none');
   }
