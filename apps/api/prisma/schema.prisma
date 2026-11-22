@@ -56,6 +56,14 @@ enum VenueBookingStatus {
   @@map("venue_booking_status")
 }
 
+enum RecurrenceFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+
+  @@map("recurrence_frequency")
+}
+
 enum RsvpStatus {
   GOING
   WAITLISTED
@@ -177,20 +185,49 @@ model EventCategory {
 }
 
 model Venue {
-  id           String         @id @default(uuid()) @db.Uuid
-  name         String         @db.VarChar(160)
-  slug         String         @db.VarChar(180)
-  building     String?        @db.VarChar(160)
-  room         String?        @db.VarChar(80)
-  capacity     Int
-  isAccessible Boolean        @default(false) @map("is_accessible")
-  deletedAt    DateTime?      @map("deleted_at") @db.Timestamptz(3)
-  createdAt    DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt    DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
-  bookings     VenueBooking[]
+  id            String              @id @default(uuid()) @db.Uuid
+  name          String              @db.VarChar(160)
+  slug          String              @db.VarChar(180)
+  building      String?             @db.VarChar(160)
+  room          String?             @db.VarChar(80)
+  capacity      Int
+  bufferMinutes Int                 @default(0) @map("buffer_minutes")
+  isActive      Boolean             @default(true) @map("is_active")
+  isAccessible  Boolean             @default(false) @map("is_accessible")
+  deletedAt     DateTime?           @map("deleted_at") @db.Timestamptz(3)
+  createdAt     DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  availability  VenueAvailability[]
+  events        Event[]
+  bookings      VenueBooking[]
 
+  @@index([isActive, deletedAt])
   @@index([deletedAt])
   @@map("venues")
+}
+
+model VenueAvailability {
+  venueId  String @map("venue_id") @db.Uuid
+  weekday  Int
+  opensAt  String @map("opens_at") @db.VarChar(5)
+  closesAt String @map("closes_at") @db.VarChar(5)
+  venue    Venue  @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  @@id([venueId, weekday])
+  @@map("venue_availability_hours")
+}
+
+model EventSeries {
+  id               String             @id @default(uuid()) @db.Uuid
+  frequency        RecurrenceFrequency
+  interval         Int                @map("recurrence_interval")
+  occurrenceCount  Int?               @map("occurrence_count")
+  untilDate        DateTime?          @map("until_date") @db.Date
+  exceptionDates   DateTime[]         @default([]) @map("exception_dates") @db.Date
+  createdAt        DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  events           Event[]
+
+  @@map("event_series")
 }
 
 model Event {
@@ -207,7 +244,11 @@ model Event {
   endAt                 DateTime       @map("end_at") @db.Timestamptz(3)
   timeZone              String         @default("UTC") @map("time_zone") @db.VarChar(64)
   capacity              Int?
+  expectedAttendance   Int?           @map("expected_attendance")
   isPublic              Boolean        @default(true) @map("is_public")
+  venueId              String?        @map("venue_id") @db.Uuid
+  seriesId             String?        @map("series_id") @db.Uuid
+  occurrenceIndex      Int?           @map("occurrence_index")
   clubId                String         @map("club_id") @db.Uuid
   categoryId            String         @map("category_id") @db.Uuid
   createdById           String         @map("created_by_id") @db.Uuid
@@ -219,10 +260,12 @@ model Event {
   updatedAt             DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
   club                  Club           @relation(fields: [clubId], references: [id], onDelete: Restrict)
   category              EventCategory  @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  venue                 Venue?         @relation(fields: [venueId], references: [id], onDelete: Restrict)
   createdBy             User           @relation("EventCreator", fields: [createdById], references: [id], onDelete: Restrict)
   approvedBy            User?          @relation("EventApprover", fields: [approvedById], references: [id], onDelete: SetNull)
   pendingImageOwner     User?          @relation("EventImageUploader", fields: [pendingImageOwnerId], references: [id], onDelete: Restrict)
-  bookings              VenueBooking[]
+  series                EventSeries?   @relation(fields: [seriesId], references: [id], onDelete: Restrict)
+  venueBookings         VenueBooking[]
   rsvps                 Rsvp[]
   notifications         Notification[]
   rsvpPromotionOutbox   RsvpPromotionOutbox[]
@@ -233,6 +276,7 @@ model Event {
   @@index([categoryId, startAt])
   @@index([createdById, createdAt])
   @@index([deletedAt])
+  @@unique([seriesId, occurrenceIndex])
   @@map("events")
 }
 

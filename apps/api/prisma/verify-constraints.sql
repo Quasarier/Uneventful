@@ -18,6 +18,7 @@ DECLARE
     rsvp_id UUID := gen_random_uuid();
     duplicate_rsvp_id UUID := gen_random_uuid();
     audit_id UUID := gen_random_uuid();
+    series_id UUID := gen_random_uuid();
     v_start_at TIMESTAMPTZ := '2035-02-01 10:00:00+00';
     ticket_status_values TEXT[];
 BEGIN
@@ -45,6 +46,51 @@ BEGIN
 
     INSERT INTO venues (id, name, slug, capacity)
     VALUES (venue_id, 'Constraint Test Venue', 'constraint-test-venue', 100);
+
+    BEGIN
+        UPDATE venues SET buffer_minutes = 1441 WHERE id = venue_id;
+        RAISE EXCEPTION 'Expected an invalid venue buffer to be rejected.';
+    EXCEPTION
+        WHEN check_violation THEN NULL;
+    END;
+
+    BEGIN
+        INSERT INTO venue_availability_hours (venue_id, weekday, opens_at, closes_at)
+        VALUES (venue_id, 1, '09:00', '09:00');
+        RAISE EXCEPTION 'Expected an invalid venue availability window to be rejected.';
+    EXCEPTION
+        WHEN check_violation THEN NULL;
+    END;
+
+    BEGIN
+        INSERT INTO events (
+            id, title, slug, description, start_at, end_at, expected_attendance,
+            club_id, category_id, created_by_id
+        )
+        VALUES (
+            gen_random_uuid(), 'Invalid Expected Attendance', 'constraint-invalid-attendance',
+            'Test fixture.', v_start_at, v_start_at + INTERVAL '1 hour', 0,
+            club_id, category_id, organizer_id
+        );
+        RAISE EXCEPTION 'Expected non-positive expected attendance to be rejected.';
+    EXCEPTION
+        WHEN check_violation THEN NULL;
+    END;
+
+    INSERT INTO event_series (
+        id, frequency, recurrence_interval, occurrence_count
+    )
+    VALUES (series_id, 'WEEKLY', 1, 1);
+
+    BEGIN
+        INSERT INTO event_series (
+            id, frequency, recurrence_interval, occurrence_count
+        )
+        VALUES (gen_random_uuid(), 'WEEKLY', 1, 53);
+        RAISE EXCEPTION 'Expected an over-cap event series to be rejected.';
+    EXCEPTION
+        WHEN check_violation THEN NULL;
+    END;
 
     INSERT INTO events (
         id, title, slug, description, status, start_at, end_at, capacity,
@@ -287,8 +333,22 @@ BEGIN
     END;
 
     BEGIN
+        ALTER TABLE venue_availability_hours ADD COLUMN app_role_ddl_probe INTEGER;
+        RAISE EXCEPTION 'Expected application-role ALTER TABLE venue availability to be rejected.';
+    EXCEPTION
+        WHEN insufficient_privilege THEN NULL;
+    END;
+
+    BEGIN
         DROP TABLE tickets;
         RAISE EXCEPTION 'Expected application-role DROP TABLE tickets to be rejected.';
+    EXCEPTION
+        WHEN insufficient_privilege THEN NULL;
+    END;
+
+    BEGIN
+        DROP TABLE event_series;
+        RAISE EXCEPTION 'Expected application-role DROP TABLE event series to be rejected.';
     EXCEPTION
         WHEN insufficient_privilege THEN NULL;
     END;
