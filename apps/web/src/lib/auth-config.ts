@@ -11,3 +11,6 @@ if (new URL(configuredWebOrigin).origin !== configuredWebOrigin) {
 
 export const WEB_ORIGIN = configuredWebOrigin;
 export const API_BASE_URL = configuredApiBaseUrl.replace(/\/+$/, '');
+const socketOrigin = new URL(API_BASE_URL);
+socketOrigin.protocol = socketOrigin.protocol === 'https:' ? 'wss:' : 'ws:';
+export const API_SOCKET_URL = socketOrigin.origin;

@@ -15,6 +15,10 @@ describe('security middleware', () => {
 
     expect(response.headers.has('Content-Security-Policy-Report-Only')).toBe(true);
     expect(response.headers.has('Strict-Transport-Security')).toBe(false);
+    expect(response.headers.get('Content-Security-Policy-Report-Only')).toContain(
+      "connect-src 'self' http://localhost:3001 ws://localhost:3001",
+    );
+    expect(response.headers.get('Content-Security-Policy-Report-Only')).not.toContain(' *');
   });
 
   it('allows camera access only on the dedicated event scanner route', () => {
