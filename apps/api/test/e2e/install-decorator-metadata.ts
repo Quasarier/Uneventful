@@ -28,6 +28,7 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     { CheckinsService },
     { CreateEventDto },
     { CreateImageUploadDto },
+    { CreateVenueDto },
     { CreateRsvpDto },
     { E2eSessionDto },
     { E2eTestSupportController },
@@ -54,7 +55,14 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     { RsvpsService },
     { SyncCheckinsDto },
     { TicketSigningService },
+    { CheckVenueConflictsDto },
+    { UpdateVenueDto },
     { UpdateEventDto },
+    { VenueBookingsRepository },
+    { VenueBookingsService },
+    { VenuesController },
+    { VenuesRepository },
+    { VenuesService },
   ] = await Promise.all([
     import('../../src/app.controller'),
     import('../../src/app.service'),
@@ -69,6 +77,7 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     import('../../src/rsvps/checkins.service'),
     import('../../src/events/dto/create-event.dto'),
     import('../../src/events/dto/create-image-upload.dto'),
+    import('../../src/venues/dto/create-venue.dto'),
     import('../../src/rsvps/dto/create-rsvp.dto'),
     import('./test-support.dto'),
     import('./test-support.controller'),
@@ -95,7 +104,14 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     import('../../src/rsvps/rsvps.service'),
     import('../../src/rsvps/dto/sync-checkins.dto'),
     import('../../src/rsvps/ticket-signing.service'),
+    import('../../src/venues/dto/check-venue-conflicts.dto'),
+    import('../../src/venues/dto/update-venue.dto'),
     import('../../src/events/dto/update-event.dto'),
+    import('../../src/venues/venue-bookings.repository'),
+    import('../../src/venues/venue-bookings.service'),
+    import('../../src/venues/venues.controller'),
+    import('../../src/venues/venues.repository'),
+    import('../../src/venues/venues.service'),
   ]);
 
   defineConstructorTypes(AppController, [AppService, HealthService]);
@@ -118,8 +134,12 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
   defineConstructorTypes(E2eTestSupportController, [PrismaService, AuthService]);
   defineConstructorTypes(EventImageStorageService, [ConfigService]);
   defineConstructorTypes(EventsController, [EventsService, AuthRateLimitService]);
-  defineConstructorTypes(EventsRepository, [PrismaService]);
-  defineConstructorTypes(EventsService, [EventsRepository, EventImageStorageService]);
+  defineConstructorTypes(EventsRepository, [PrismaService, VenueBookingsService]);
+  defineConstructorTypes(EventsService, [
+    EventsRepository,
+    EventImageStorageService,
+    VenueBookingsService,
+  ]);
   defineConstructorTypes(GlobalApiRateLimitGuard, [AuthRateLimitService, Reflector, ConfigService]);
   defineConstructorTypes(GoogleOidcService, [ConfigService]);
   defineConstructorTypes(HealthService, [PrismaService, AuthRateLimitService]);
@@ -138,6 +158,11 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
   defineConstructorTypes(RsvpsRepository, [PrismaService, TicketSigningService]);
   defineConstructorTypes(RsvpsService, [RsvpsRepository]);
   defineConstructorTypes(TicketSigningService, [ConfigService]);
+  defineConstructorTypes(VenueBookingsRepository, [PrismaService]);
+  defineConstructorTypes(VenueBookingsService, [VenueBookingsRepository, ConfigService]);
+  defineConstructorTypes(VenuesController, [VenuesService, AuthRateLimitService]);
+  defineConstructorTypes(VenuesRepository, [PrismaService]);
+  defineConstructorTypes(VenuesService, [VenuesRepository, VenueBookingsService]);
 
   defineMethodTypes(AppController, 'getLiveness', []);
   defineMethodTypes(AppController, 'getReadiness', []);
@@ -158,6 +183,12 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
   defineMethodTypes(EventsController, 'createImageUpload', [Object, String, CreateImageUploadDto]);
   defineMethodTypes(EventsController, 'confirmImageUpload', [Object, String]);
   defineMethodTypes(EventsController, 'getImage', [Object, String, Object]);
+  defineMethodTypes(VenuesController, 'list', []);
+  defineMethodTypes(VenuesController, 'get', [Object, String]);
+  defineMethodTypes(VenuesController, 'checkConflicts', [Object, CheckVenueConflictsDto]);
+  defineMethodTypes(VenuesController, 'create', [Object, CreateVenueDto]);
+  defineMethodTypes(VenuesController, 'update', [Object, String, UpdateVenueDto]);
+  defineMethodTypes(VenuesController, 'retire', [Object, String]);
   defineMethodTypes(RsvpsController, 'getStatus', [Object, String]);
   defineMethodTypes(RsvpsController, 'listAttendees', [Object, String, ListEventAttendeesDto]);
   defineMethodTypes(RsvpsController, 'rsvp', [Object, String, CreateRsvpDto]);

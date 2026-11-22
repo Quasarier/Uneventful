@@ -4,7 +4,10 @@ import { NestFactory } from '@nestjs/core';
 import { Reflector } from '@nestjs/core';
 import { EventStatus } from '../generated/prisma/client';
 import { AuthService } from '../src/auth/auth.service';
-import { AuthRateLimitService } from '../src/auth/auth-rate-limit.service';
+import {
+  AuthRateLimitExceededException,
+  AuthRateLimitService,
+} from '../src/auth/auth-rate-limit.service';
 import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
 import { RolesGuard } from '../src/auth/roles.guard';
 import { validateEnvironment, type Environment } from '../src/config/environment';
@@ -13,7 +16,13 @@ import { EventImageStorageService } from '../src/events/event-image-storage.serv
 import { EventsController } from '../src/events/events.controller';
 import { EventsRepository } from '../src/events/events.repository';
 import { EventsService } from '../src/events/events.service';
+import { VenueBookingsRepository } from '../src/venues/venue-bookings.repository';
+import { VenueBookingsService } from '../src/venues/venue-bookings.service';
+import { VenuesController } from '../src/venues/venues.controller';
+import { VenuesRepository } from '../src/venues/venues.repository';
+import { VenuesService } from '../src/venues/venues.service';
 import { CreateEventDto } from '../src/events/dto/create-event.dto';
+import { CreateEventSeriesDto } from '../src/venues/dto/create-event-series.dto';
 import { CreateImageUploadDto } from '../src/events/dto/create-image-upload.dto';
 import { RejectEventDto } from '../src/events/dto/reject-event.dto';
 import { UpdateEventDto } from '../src/events/dto/update-event.dto';
@@ -28,6 +37,12 @@ Reflect.defineMetadata(
   [Object, CreateEventDto],
   EventsController.prototype,
   'create',
+);
+Reflect.defineMetadata(
+  'design:paramtypes',
+  [Object, CreateEventSeriesDto],
+  EventsController.prototype,
+  'createSeries',
 );
 Reflect.defineMetadata(
   'design:paramtypes',
@@ -63,6 +78,8 @@ type TestRole = (typeof roleNames)[number];
 const principals = new Map<TestRole, AuthPrincipal>();
 const userIds: string[] = [];
 const eventIds: string[] = [];
+const venueIds: string[] = [];
+const eventSeriesIds: string[] = [];
 let appPrisma: PrismaService;
 let migrationPrisma: PrismaService;
 let app: INestApplication;
@@ -94,6 +111,7 @@ function configFor(databaseUrl: string): ConfigService<Environment, true> {
     GOOGLE_CLIENT_SECRET: 'events-integration-secret',
     GOOGLE_CALLBACK_URL: 'http://localhost:3001/api/v1/auth/google/callback',
     UNIVERSITY_EMAIL_DOMAIN: 'example.edu',
+    CAMPUS_TIME_ZONE: 'America/New_York',
     WEB_ORIGIN: 'http://localhost:3000',
     SESSION_SECRET: `${randomUUID()}${randomUUID()}`,
     JWT_PRIVATE_KEY_B64: Buffer.from('unused-private-key').toString('base64'),
@@ -124,19 +142,43 @@ const authStub = {
 let activePrisma: PrismaService;
 
 @Module({
-  controllers: [EventsController],
+  controllers: [EventsController, VenuesController],
   providers: [
     {
+      provide: VenueBookingsRepository,
+      useFactory: () => new VenueBookingsRepository(activePrisma),
+    },
+    {
+      provide: VenueBookingsService,
+      useFactory: (repository: VenueBookingsRepository) =>
+        new VenueBookingsService(repository, configFor(appDatabaseUrl!)),
+      inject: [VenueBookingsRepository],
+    },
+    {
+      provide: VenuesRepository,
+      useFactory: () => new VenuesRepository(activePrisma),
+    },
+    {
+      provide: VenuesService,
+      useFactory: (repository: VenuesRepository, bookings: VenueBookingsService) =>
+        new VenuesService(repository, bookings),
+      inject: [VenuesRepository, VenueBookingsService],
+    },
+    {
       provide: EventsRepository,
-      useFactory: () => new EventsRepository(activePrisma),
+      useFactory: (bookings: VenueBookingsService) => new EventsRepository(activePrisma, bookings),
+      inject: [VenueBookingsService],
     },
     { provide: EventImageStorageService, useFactory: () => imageStorageStub },
     { provide: AuthRateLimitService, useFactory: () => rateLimitStub },
     {
       provide: EventsService,
-      useFactory: (repository: EventsRepository, storage: EventImageStorageService) =>
-        new EventsService(repository, storage),
-      inject: [EventsRepository, EventImageStorageService],
+      useFactory: (
+        repository: EventsRepository,
+        storage: EventImageStorageService,
+        bookings: VenueBookingsService,
+      ) => new EventsService(repository, storage, bookings),
+      inject: [EventsRepository, EventImageStorageService, VenueBookingsService],
     },
     { provide: AuthService, useValue: authStub },
   ],
@@ -192,7 +234,7 @@ describe('events PostgreSQL/HTTP integration', () => {
     imageStorageStub.createUploadForm.mockClear();
     imageStorageStub.sanitizeAndStoreUploadedObject.mockClear();
     imageStorageStub.getFinalImage.mockClear();
-    rateLimitStub.consume.mockClear();
+    rateLimitStub.consume.mockReset().mockResolvedValue(undefined);
 
     const ids = new Map(roleNames.map((role) => [role, randomUUID()]));
     for (const role of roleNames) {
@@ -287,11 +329,29 @@ describe('events PostgreSQL/HTTP integration', () => {
 
   afterEach(async () => {
     if (userIds.length > 0) {
+      if (eventIds.length > 0) {
+        await migrationPrisma.venueBooking.deleteMany({
+          where: { eventId: { in: eventIds } },
+        });
+      }
       await migrationPrisma.event.deleteMany({
         where: {
           OR: [{ clubId: { in: [clubId, foreignClubId] } }, { createdById: { in: userIds } }],
         },
       });
+      if (eventSeriesIds.length > 0) {
+        await migrationPrisma.eventSeries.deleteMany({
+          where: { id: { in: eventSeriesIds } },
+        });
+        eventSeriesIds.splice(0, eventSeriesIds.length);
+      }
+      if (venueIds.length > 0) {
+        await migrationPrisma.venueAvailability.deleteMany({
+          where: { venueId: { in: venueIds } },
+        });
+        await migrationPrisma.venue.deleteMany({ where: { id: { in: venueIds } } });
+        venueIds.splice(0, venueIds.length);
+      }
       eventIds.splice(0, eventIds.length);
       await migrationPrisma.clubMembership.deleteMany({ where: { userId: { in: userIds } } });
       await migrationPrisma.club.deleteMany({ where: { createdById: { in: userIds } } });
@@ -780,6 +840,489 @@ describe('events PostgreSQL/HTTP integration', () => {
     expect(response.status).toBe(200);
     expect(await response.text()).toBe('normalized image data');
   });
+
+  it('limits venue management to admins and returns masked 404s for inactive venues', async () => {
+    const organizerCreate = await request(
+      'organizer',
+      'POST',
+      '/venues',
+      venuePayload('Organizer'),
+    );
+    const studentCreate = await request('student', 'POST', '/venues', venuePayload('Student'));
+    expect(organizerCreate.status).toBe(403);
+    expect(studentCreate.status).toBe(403);
+
+    const venue = await createVenue('Restricted Venue');
+    const body = (await venue.json()) as Record<string, unknown> & { id: string };
+    expect(Object.keys(body).sort()).toEqual(
+      [
+        'id',
+        'name',
+        'building',
+        'capacity',
+        'bufferMinutes',
+        'isActive',
+        'availabilityHours',
+      ].sort(),
+    );
+    venueIds.push(body.id);
+
+    for (const role of ['organizer', 'student'] as const) {
+      expect(
+        (await request(role, 'PATCH', `/venues/${body.id}`, { name: 'Unauthorized change' }))
+          .status,
+      ).toBe(403);
+      expect((await request(role, 'DELETE', `/venues/${body.id}`)).status).toBe(403);
+    }
+
+    const retired = await request('admin', 'PATCH', `/venues/${body.id}`, { isActive: false });
+    expect(retired.status).toBe(200);
+    expect(rateLimitStub.consume).toHaveBeenCalledWith(
+      'venue-write-user',
+      principals.get('admin')!.id,
+      30,
+      60_000,
+      expect.any(Object),
+    );
+    const hidden = await request('organizer', 'GET', `/venues/${body.id}`);
+    const unknown = await request('organizer', 'GET', `/venues/${randomUUID()}`);
+    expect(hidden.status).toBe(404);
+    expect(await hidden.json()).toEqual(await unknown.json());
+    expect((await request('admin', 'GET', '/venues')).status).toBe(200);
+    expect(rateLimitStub.consume).not.toHaveBeenCalledWith(
+      'venue-conflict-user',
+      expect.any(String),
+      expect.any(Number),
+      expect.any(Number),
+      expect.any(Object),
+    );
+
+    const audits = await appPrisma.auditLog.findMany({
+      where: { entityType: 'Venue', entityId: body.id },
+      select: { action: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    expect(audits.map(({ action }) => action)).toEqual(['VENUE_CREATED', 'VENUE_UPDATED']);
+  });
+
+  it('reports safe booking conflicts and excludes occupied or inactive venues from alternatives', async () => {
+    const venueResponse = await createVenue('Booked Venue', { bufferMinutes: 15 });
+    const venue = (await venueResponse.json()) as { id: string };
+    venueIds.push(venue.id);
+    const freeResponse = await createVenue('Free Alternative');
+    const freeVenue = (await freeResponse.json()) as { id: string };
+    venueIds.push(freeVenue.id);
+    const occupiedResponse = await createVenue('Occupied Alternative');
+    const occupiedVenue = (await occupiedResponse.json()) as { id: string };
+    venueIds.push(occupiedVenue.id);
+    const inactiveResponse = await createVenue('Inactive Alternative');
+    const inactiveVenue = (await inactiveResponse.json()) as { id: string };
+    venueIds.push(inactiveVenue.id);
+    await request('admin', 'PATCH', `/venues/${inactiveVenue.id}`, { isActive: false });
+
+    const event = await createApiEvent({ title: 'Original booking', venueId: venue.id });
+    const occupiedEvent = await createApiEvent({
+      title: 'Alternative booking',
+      venueId: occupiedVenue.id,
+    });
+    const conflict = await request('organizer', 'POST', '/venues/conflicts', {
+      venueId: venue.id,
+      startAt: '2035-02-01T15:00:00.000Z',
+      endAt: '2035-02-01T16:00:00.000Z',
+      expectedAttendance: 20,
+    });
+
+    expect(conflict.status).toBe(409);
+    const result = (await conflict.json()) as {
+      conflicts: Array<Record<string, unknown>>;
+      alternatives: Array<{ venueId: string; startAt: string; endAt: string }>;
+    };
+    expect(result.conflicts).toEqual([
+      { startAt: '2035-02-01T15:00:00.000Z', endAt: '2035-02-01T16:00:00.000Z' },
+    ]);
+    expect(JSON.stringify(result)).not.toContain(event.id);
+    expect(JSON.stringify(result)).not.toContain(occupiedEvent.id);
+    expect(JSON.stringify(result)).not.toContain('Original booking');
+    expect(JSON.stringify(result)).not.toContain('Alternative booking');
+    expect(result.alternatives.some(({ venueId }) => venueId === freeVenue.id)).toBe(true);
+    expect(result.alternatives.some(({ venueId }) => venueId === occupiedVenue.id)).toBe(false);
+    expect(result.alternatives.some(({ venueId }) => venueId === inactiveVenue.id)).toBe(false);
+    expect(result.alternatives.length).toBeLessThanOrEqual(3);
+    expect(conflict.headers.get('cache-control')).toContain('no-store');
+
+    const hiddenEvent = await request('outsider', 'POST', '/venues/conflicts', {
+      venueId: venue.id,
+      startAt: '2035-02-01T15:00:00.000Z',
+      endAt: '2035-02-01T16:00:00.000Z',
+      expectedAttendance: 20,
+      eventId: event.id,
+    });
+    const unknownEvent = await request('outsider', 'POST', '/venues/conflicts', {
+      venueId: venue.id,
+      startAt: '2035-02-01T15:00:00.000Z',
+      endAt: '2035-02-01T16:00:00.000Z',
+      expectedAttendance: 20,
+      eventId: randomUUID(),
+    });
+    expect(hiddenEvent.status).toBe(404);
+    expect(await hiddenEvent.json()).toEqual(await unknownEvent.json());
+    const foreignClubEvent = await request('organizer', 'POST', '/venues/conflicts', {
+      venueId: venue.id,
+      startAt: '2035-02-01T15:00:00.000Z',
+      endAt: '2035-02-01T16:00:00.000Z',
+      expectedAttendance: 20,
+      eventId: foreignEventId,
+    });
+    const unknownClubEvent = await request('organizer', 'POST', '/venues/conflicts', {
+      venueId: venue.id,
+      startAt: '2035-02-01T15:00:00.000Z',
+      endAt: '2035-02-01T16:00:00.000Z',
+      expectedAttendance: 20,
+      eventId: randomUUID(),
+    });
+    expect(foreignClubEvent.status).toBe(404);
+    expect(await foreignClubEvent.json()).toEqual(await unknownClubEvent.json());
+    expect(rateLimitStub.consume).toHaveBeenCalledWith(
+      'venue-conflict-user',
+      principals.get('organizer')!.id,
+      30,
+      60_000,
+      expect.any(Object),
+    );
+    const bookingAudits = await appPrisma.auditLog.findMany({
+      where: {
+        actorId: principals.get('organizer')!.id,
+        entityType: 'VenueBooking',
+        action: 'VENUE_BOOKING_CREATED',
+      },
+      select: { action: true },
+    });
+    expect(bookingAudits).toHaveLength(2);
+  });
+
+  it('rate-limits venue checks and booking writes with Retry-After', async () => {
+    rateLimitStub.consume.mockImplementation((scope: string) =>
+      scope === 'venue-conflict-user'
+        ? Promise.reject(new AuthRateLimitExceededException('Try again later.', 17))
+        : Promise.resolve(),
+    );
+    const conflictResponse = await request('organizer', 'POST', '/venues/conflicts', {
+      venueId: randomUUID(),
+      startAt: '2035-02-01T15:00:00.000Z',
+      endAt: '2035-02-01T16:00:00.000Z',
+      expectedAttendance: 10,
+    });
+    expect(conflictResponse.status).toBe(429);
+    expect(conflictResponse.headers.get('retry-after')).toBe('17');
+
+    rateLimitStub.consume.mockImplementation((scope: string) =>
+      scope === 'venue-write-user'
+        ? Promise.reject(new AuthRateLimitExceededException('Try again later.', 18))
+        : Promise.resolve(),
+    );
+    const venueResponse = await request('admin', 'POST', '/venues', venuePayload('Rate limited'));
+    expect(venueResponse.status).toBe(429);
+    expect(venueResponse.headers.get('retry-after')).toBe('18');
+
+    rateLimitStub.consume.mockImplementation((scope: string) =>
+      scope === 'venue-booking-write-user'
+        ? Promise.reject(new AuthRateLimitExceededException('Try again later.', 19))
+        : Promise.resolve(),
+    );
+    const eventResponse = await request('organizer', 'POST', '/events', {
+      title: 'Rate-limited event',
+      description: 'No event should be created.',
+      startAt: '2035-02-01T15:00:00.000Z',
+      endAt: '2035-02-01T16:00:00.000Z',
+      timeZone: 'America/New_York',
+      isPublic: true,
+      clubId,
+      categoryId,
+    });
+    expect(eventResponse.status).toBe(429);
+    expect(eventResponse.headers.get('retry-after')).toBe('19');
+  });
+
+  it('serializes 20 competing booking updates so exactly one approved booking wins', async () => {
+    const venueResponse = await createVenue('Concurrency Venue');
+    const venue = (await venueResponse.json()) as { id: string };
+    venueIds.push(venue.id);
+
+    const events = await Promise.all(
+      Array.from({ length: 20 }, (_, index) =>
+        createApiEvent({ title: `Concurrent ${index}`, venueId: null }),
+      ),
+    );
+    for (const event of events) {
+      expect((await request('organizer', 'POST', `/events/${event.id}/submit`)).status).toBe(201);
+    }
+
+    const updates = await Promise.all(
+      events.map(({ id }) => request('organizer', 'PATCH', `/events/${id}`, { venueId: venue.id })),
+    );
+    const updateResults = await Promise.all(
+      updates.map(async (response) => ({
+        status: response.status,
+        body: await response.clone().text(),
+      })),
+    );
+    expect(
+      updates.filter(({ status }) => status === 200),
+      JSON.stringify(updateResults),
+    ).toHaveLength(1);
+    expect(
+      updates.filter(({ status }) => status === 409),
+      JSON.stringify(updateResults),
+    ).toHaveLength(19);
+    const winningEvent = events[updates.findIndex(({ status }) => status === 200)]!;
+    expect((await request('admin', 'POST', `/events/${winningEvent.id}/approve`)).status).toBe(201);
+
+    const approvedBookings = await appPrisma.venueBooking.count({
+      where: {
+        venueId: venue.id,
+        status: 'APPROVED',
+        startAt: new Date('2035-02-01T15:00:00.000Z'),
+      },
+    });
+    expect(approvedBookings).toBe(1);
+  });
+
+  it('releases venue slots on reject, cancel, and delete', async () => {
+    const venueResponse = await createVenue('Release Venue');
+    const venue = (await venueResponse.json()) as { id: string };
+    venueIds.push(venue.id);
+
+    const rejected = await createApiEvent({ title: 'Rejected booking', venueId: venue.id });
+    await request('organizer', 'POST', `/events/${rejected.id}/submit`);
+    expect(
+      (await request('admin', 'POST', `/events/${rejected.id}/reject`, { reason: 'Rejected' }))
+        .status,
+    ).toBe(201);
+    expect(
+      (
+        await appPrisma.venueBooking.findFirst({
+          where: { eventId: rejected.id },
+          orderBy: { updatedAt: 'desc' },
+        })
+      )?.status,
+    ).toBe('REJECTED');
+    expect(
+      (
+        await request('organizer', 'POST', '/venues/conflicts', {
+          venueId: venue.id,
+          startAt: '2035-02-01T15:00:00.000Z',
+          endAt: '2035-02-01T16:00:00.000Z',
+          expectedAttendance: 18,
+        })
+      ).status,
+    ).toBe(200);
+
+    const cancelled = await createApiEvent({ title: 'Cancelled booking', venueId: venue.id });
+    expect((await request('organizer', 'POST', `/events/${cancelled.id}/cancel`)).status).toBe(201);
+    expect(
+      (
+        await appPrisma.venueBooking.findFirst({
+          where: { eventId: cancelled.id },
+          orderBy: { updatedAt: 'desc' },
+        })
+      )?.status,
+    ).toBe('CANCELLED');
+    expect(
+      (
+        await request('organizer', 'POST', '/venues/conflicts', {
+          venueId: venue.id,
+          startAt: '2035-02-01T15:00:00.000Z',
+          endAt: '2035-02-01T16:00:00.000Z',
+          expectedAttendance: 18,
+        })
+      ).status,
+    ).toBe(200);
+
+    const deleted = await createApiEvent({ title: 'Deleted booking', venueId: venue.id });
+    expect((await request('organizer', 'DELETE', `/events/${deleted.id}`)).status).toBe(200);
+    expect(
+      (
+        await appPrisma.venueBooking.findFirst({
+          where: { eventId: deleted.id },
+          orderBy: { updatedAt: 'desc' },
+        })
+      )?.status,
+    ).toBe('CANCELLED');
+    expect(
+      (
+        await request('organizer', 'POST', '/venues/conflicts', {
+          venueId: venue.id,
+          startAt: '2035-02-01T15:00:00.000Z',
+          endAt: '2035-02-01T16:00:00.000Z',
+          expectedAttendance: 18,
+        })
+      ).status,
+    ).toBe(200);
+  });
+
+  it('creates recurring bookings atomically, handles exceptions and caps, and persists DST-correct times', async () => {
+    const venueResponse = await createVenue('Series Venue');
+    const venue = (await venueResponse.json()) as { id: string };
+    venueIds.push(venue.id);
+    const seriesBody = {
+      title: 'Weekly Series',
+      description: 'A recurring event',
+      startAt: '2035-02-01T15:00:00.000Z',
+      endAt: '2035-02-01T16:00:00.000Z',
+      timeZone: 'America/New_York',
+      capacity: 20,
+      expectedAttendance: 18,
+      isPublic: true,
+      clubId,
+      categoryId,
+      venueId: venue.id,
+      recurrence: { frequency: 'WEEKLY', interval: 1, count: 3 },
+      exceptionDates: ['2035-02-08'],
+    };
+    const createdResponse = await request('organizer', 'POST', '/events/series', seriesBody);
+    expect(createdResponse.status).toBe(201);
+    const created = (await createdResponse.json()) as {
+      seriesId: string;
+      events: Array<{ id: string }>;
+    };
+    eventSeriesIds.push(created.seriesId);
+    eventIds.push(...created.events.map(({ id }) => id));
+    expect(created.events).toHaveLength(2);
+    const exceptionSeriesEvents = await appPrisma.event.findMany({
+      where: { seriesId: created.seriesId },
+      select: { startAt: true },
+      orderBy: { startAt: 'asc' },
+    });
+    expect(exceptionSeriesEvents.map(({ startAt }) => startAt.toISOString())).toEqual([
+      '2035-02-01T15:00:00.000Z',
+      '2035-02-15T15:00:00.000Z',
+    ]);
+    expect(
+      await appPrisma.venueBooking.count({
+        where: { eventId: { in: created.events.map(({ id }) => id) }, status: 'PENDING' },
+      }),
+    ).toBe(2);
+
+    const previousCount = await appPrisma.event.count({ where: { seriesId: created.seriesId } });
+    const conflictingResponse = await request('organizer', 'POST', '/events/series', {
+      ...seriesBody,
+      title: 'Conflicting Series',
+      recurrence: { frequency: 'WEEKLY', interval: 1, count: 3 },
+      exceptionDates: [],
+    });
+    expect(conflictingResponse.status).toBe(409);
+    expect(await appPrisma.event.count({ where: { seriesId: created.seriesId } })).toBe(
+      previousCount,
+    );
+    expect(await appPrisma.event.count({ where: { title: 'Conflicting Series' } })).toBe(0);
+
+    const overCap = await request('organizer', 'POST', '/events/series', {
+      ...seriesBody,
+      recurrence: { frequency: 'DAILY', interval: 1, count: 53 },
+      exceptionDates: [],
+    });
+    expect(overCap.status).toBe(400);
+
+    const dstSeriesResponse = await request('organizer', 'POST', '/events/series', {
+      ...seriesBody,
+      title: 'DST Series',
+      startAt: '2027-03-07T14:00:00.000Z',
+      endAt: '2027-03-07T15:00:00.000Z',
+      recurrence: { frequency: 'WEEKLY', interval: 1, count: 3 },
+      exceptionDates: [],
+    });
+    expect(dstSeriesResponse.status).toBe(201);
+    const dstSeries = (await dstSeriesResponse.json()) as {
+      seriesId: string;
+      events: Array<{ id: string }>;
+    };
+    eventSeriesIds.push(dstSeries.seriesId);
+    eventIds.push(...dstSeries.events.map(({ id }) => id));
+    const dstEvents = await appPrisma.event.findMany({
+      where: { seriesId: dstSeries.seriesId },
+      select: { startAt: true },
+      orderBy: { startAt: 'asc' },
+    });
+    expect(dstEvents.map(({ startAt }) => startAt.toISOString())).toEqual([
+      '2027-03-07T14:00:00.000Z',
+      '2027-03-14T13:00:00.000Z',
+      '2027-03-21T13:00:00.000Z',
+    ]);
+  });
+
+  it('checks buffer, capacity, availability hours, past starts, and inactive venues', async () => {
+    const bufferedResponse = await createVenue('Buffered Venue', { bufferMinutes: 15 });
+    const bufferedVenue = (await bufferedResponse.json()) as { id: string };
+    venueIds.push(bufferedVenue.id);
+    const existing = await createApiEvent({
+      title: 'Buffered reservation',
+      venueId: bufferedVenue.id,
+    });
+    const adjacent = await request('organizer', 'POST', '/venues/conflicts', {
+      venueId: bufferedVenue.id,
+      startAt: '2035-02-01T16:00:00.000Z',
+      endAt: '2035-02-01T17:00:00.000Z',
+      expectedAttendance: 20,
+    });
+    expect(adjacent.status).toBe(409);
+    const exactBuffer = await request('organizer', 'POST', '/venues/conflicts', {
+      venueId: bufferedVenue.id,
+      startAt: '2035-02-01T16:15:00.000Z',
+      endAt: '2035-02-01T17:15:00.000Z',
+      expectedAttendance: 20,
+    });
+    expect(exactBuffer.status).toBe(200);
+
+    const capacity = await request('organizer', 'POST', '/venues/conflicts', {
+      venueId: bufferedVenue.id,
+      startAt: '2035-02-01T18:00:00.000Z',
+      endAt: '2035-02-01T19:00:00.000Z',
+      expectedAttendance: 101,
+    });
+    expect(capacity.status).toBe(409);
+    expect((await capacity.json()).reasons).toContain('CAPACITY');
+
+    const restrictedResponse = await createVenue('Hours Venue', {
+      availabilityHours: [{ weekday: 1, opensAt: '09:00', closesAt: '17:00' }],
+    });
+    const restrictedVenue = (await restrictedResponse.json()) as { id: string };
+    venueIds.push(restrictedVenue.id);
+    const outsideHours = await request('organizer', 'POST', '/venues/conflicts', {
+      venueId: restrictedVenue.id,
+      startAt: '2035-02-01T15:00:00.000Z',
+      endAt: '2035-02-01T16:00:00.000Z',
+      expectedAttendance: 10,
+    });
+    expect(outsideHours.status).toBe(409);
+    expect((await outsideHours.json()).reasons).toContain('OUTSIDE_HOURS');
+
+    const past = await request('organizer', 'POST', '/venues/conflicts', {
+      venueId: bufferedVenue.id,
+      startAt: '2020-02-01T15:00:00.000Z',
+      endAt: '2020-02-01T16:00:00.000Z',
+      expectedAttendance: 10,
+    });
+    expect(past.status).toBe(409);
+    expect((await past.json()).reasons).toContain('PAST_START');
+
+    await request('admin', 'PATCH', `/venues/${bufferedVenue.id}`, { isActive: false });
+    const inactive = await request('organizer', 'POST', '/venues/conflicts', {
+      venueId: bufferedVenue.id,
+      startAt: '2035-02-02T15:00:00.000Z',
+      endAt: '2035-02-02T16:00:00.000Z',
+      expectedAttendance: 10,
+      eventId: existing.id,
+    });
+    expect(inactive.status).toBe(404);
+    const unknownVenue = await request('organizer', 'POST', '/venues/conflicts', {
+      venueId: randomUUID(),
+      startAt: '2035-02-02T15:00:00.000Z',
+      endAt: '2035-02-02T16:00:00.000Z',
+      expectedAttendance: 10,
+      eventId: existing.id,
+    });
+    expect(await inactive.json()).toEqual(await unknownVenue.json());
+  });
 });
 
 async function createEvent(input: {
@@ -833,4 +1376,59 @@ async function request(
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
+}
+
+function venuePayload(
+  name: string,
+  overrides: {
+    bufferMinutes?: number;
+    capacity?: number;
+    availabilityHours?: Array<{ weekday: number; opensAt: string; closesAt: string }>;
+  } = {},
+) {
+  return {
+    name,
+    building: 'Student Union',
+    capacity: overrides.capacity ?? 100,
+    bufferMinutes: overrides.bufferMinutes ?? 0,
+    availabilityHours:
+      overrides.availabilityHours ??
+      Array.from({ length: 7 }, (_, index) => ({
+        weekday: index + 1,
+        opensAt: '00:00',
+        closesAt: '23:59',
+      })),
+  };
+}
+
+async function createVenue(
+  name: string,
+  overrides?: Parameters<typeof venuePayload>[1],
+): Promise<Response> {
+  return request('admin', 'POST', '/venues', venuePayload(name, overrides));
+}
+
+async function createApiEvent(input: {
+  title: string;
+  venueId: string | null;
+}): Promise<{ id: string }> {
+  const response = await request('organizer', 'POST', '/events', {
+    title: input.title,
+    description: 'A test event',
+    startAt: '2035-02-01T15:00:00.000Z',
+    endAt: '2035-02-01T16:00:00.000Z',
+    timeZone: 'America/New_York',
+    capacity: 20,
+    expectedAttendance: 18,
+    isPublic: true,
+    clubId,
+    categoryId,
+    venueId: input.venueId,
+  });
+  if (!response.ok) {
+    throw new Error(`Could not create integration event: ${response.status}`);
+  }
+  const event = (await response.json()) as { id: string };
+  eventIds.push(event.id);
+  return event;
 }
