@@ -232,6 +232,29 @@ docker exec -i \
 echo "Applying all migrations to the disposable PostgreSQL database..."
 run_pnpm --filter @uneventful/api db:deploy
 
+echo "Verifying database constraints and application-role privileges..."
+MIGRATION_DATABASE_URL="$DATABASE_URL" \
+  run_pnpm --filter @uneventful/api exec prisma db execute --file prisma/verify-constraints.sql
+
+echo "Verifying audit-log triggers as the migration owner..."
+run_pnpm --filter @uneventful/api exec prisma db execute --file prisma/verify-audit-immutability.sql
+
+echo "Verifying the seed command refuses production..."
+if seed_output="$(
+  NODE_ENV=production \
+    DATABASE_URL=postgresql://invalid:invalid@localhost/invalid \
+    run_pnpm --filter @uneventful/api exec tsx prisma/seed.ts 2>&1
+)"; then
+  echo "Seed unexpectedly succeeded with NODE_ENV=production." >&2
+  exit 1
+fi
+if ! grep -Fq "Database seeding is disabled in production." <<<"$seed_output"; then
+  echo "Seed failed for a reason other than the production guard." >&2
+  printf '%s\n' "$seed_output" >&2
+  exit 1
+fi
+echo "Seed refused production as expected."
+
 echo "Running API PostgreSQL and Redis integration tests..."
 run_pnpm --filter @uneventful/api test:integration
 
