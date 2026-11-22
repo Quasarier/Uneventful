@@ -1,7 +1,10 @@
+import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type BrowserContext, type Response } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001/api/v1';
 const webOrigin = process.env.NEXT_PUBLIC_WEB_ORIGIN ?? 'http://localhost:3000';
+const apiOrigin = new URL(apiBaseUrl).origin;
 
 function getBypassSecret(): string {
   const secret = process.env.E2E_TEST_AUTH_BYPASS_SECRET;
@@ -434,9 +437,214 @@ test('scans tickets online and offline, syncs queued hashes, and clears local da
   }
 });
 
+test('live event dashboard updates after a check-in, passes axe, and clears on logout', async ({
+  browser,
+  request,
+}) => {
+  const fixtureResponse = await request.post(`${apiBaseUrl}/__test/e2e/fixtures`, {
+    headers: { 'x-uneventful-e2e-secret': bypassSecret },
+  });
+  expect(fixtureResponse.status()).toBe(201);
+  const fixture: { fixtureId: string; eventId: string; title: string } =
+    await fixtureResponse.json();
+  const studentContext = await browser.newContext();
+  const organizerContext = await browser.newContext();
+  const contexts: BrowserContext[] = [studentContext, organizerContext];
+
+  try {
+    for (const [context, user] of [
+      [studentContext, 'first'],
+      [organizerContext, 'organizer'],
+    ] as const) {
+      const sessionResponse = await context.request.post(
+        `${apiBaseUrl}/__test/e2e/fixtures/${fixture.fixtureId}/session`,
+        {
+          headers: { 'x-uneventful-e2e-secret': bypassSecret },
+          data: { user },
+        },
+      );
+      expect(sessionResponse.status()).toBe(204);
+    }
+
+    const studentRefresh = await studentContext.request.post(`${apiBaseUrl}/auth/refresh`, {
+      headers: { Origin: webOrigin, 'X-Uneventful-CSRF': '1' },
+    });
+    expect(studentRefresh.status()).toBe(200);
+    const studentSession: { accessToken: string } = await studentRefresh.json();
+    const rsvpResponse = await studentContext.request.post(
+      `${apiBaseUrl}/events/${fixture.eventId}/rsvp`,
+      { headers: { Authorization: `Bearer ${studentSession.accessToken}` }, data: {} },
+    );
+    const rsvpBody = await rsvpResponse.text();
+    expect(rsvpResponse.status(), rsvpBody).toBe(201);
+    const rsvp: { ticketToken?: string } = JSON.parse(rsvpBody);
+    expect(rsvp.ticketToken).toBeTruthy();
+
+    const organizerRefresh = await organizerContext.request.post(`${apiBaseUrl}/auth/refresh`, {
+      headers: { Origin: webOrigin, 'X-Uneventful-CSRF': '1' },
+    });
+    expect(organizerRefresh.status()).toBe(200);
+    const organizerSession: { accessToken: string } = await organizerRefresh.json();
+    const page = await organizerContext.newPage();
+    const sockets: string[] = [];
+    page.on('websocket', (webSocket) => sockets.push(webSocket.url()));
+
+    const dashboardResponse = await page.goto(`/events/${fixture.eventId}/dashboard`);
+    expect(dashboardResponse?.status()).toBe(200);
+    const headers = dashboardResponse?.headers() ?? {};
+    const csp = headers['content-security-policy'] ?? '';
+    expect(csp).toContain(`connect-src 'self' ${apiOrigin} ${apiOrigin.replace(/^http/, 'ws')}`);
+    await expect(page.getByRole('heading', { name: 'Live event dashboard' })).toBeVisible();
+    await expect(page.getByText('Live updates connected.')).toBeVisible();
+    await expect(page.getByText('Checked in', { exact: true })).toBeVisible();
+    await expect(page.getByText('0', { exact: true })).toBeVisible();
+    await expect.poll(() => sockets.length).toBeGreaterThan(0);
+    for (const socketUrl of sockets) {
+      const search = new URL(socketUrl).searchParams;
+      expect(search.has('token')).toBe(false);
+      expect(search.has('accessToken')).toBe(false);
+      expect(search.has('access_token')).toBe(false);
+    }
+
+    const accessibility = await new AxeBuilder({ page })
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+      .analyze();
+    expect(accessibility.violations).toEqual([]);
+
+    const checkin = await organizerContext.request.post(
+      `${apiBaseUrl}/events/${fixture.eventId}/checkins`,
+      {
+        headers: { Authorization: `Bearer ${organizerSession.accessToken}` },
+        data: { ticket: rsvp.ticketToken, deviceId: randomUUID() },
+      },
+    );
+    expect(checkin.status(), await checkin.text()).toBe(201);
+    await expect(
+      page.getByText('Checked in', { exact: true }).locator('..').getByText('1', { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText('100%', { exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Sign out' }).click();
+    await expect(page).toHaveURL(/\/login$/);
+    await expect(page.getByRole('heading', { name: 'Live event dashboard' })).toHaveCount(0);
+  } finally {
+    await Promise.all(contexts.map((context) => context.close()));
+    const cleanupResponse = await request.delete(
+      `${apiBaseUrl}/__test/e2e/fixtures/${fixture.fixtureId}`,
+      { headers: { 'x-uneventful-e2e-secret': bypassSecret } },
+    );
+    expect(cleanupResponse.status(), await cleanupResponse.text()).toBe(204);
+  }
+});
+
+test('refreshes an expired dashboard token before reconnect and stops after refresh is rejected', async ({
+  browser,
+  request,
+}) => {
+  const fixtureResponse = await request.post(`${apiBaseUrl}/__test/e2e/fixtures`, {
+    headers: { 'x-uneventful-e2e-secret': bypassSecret },
+  });
+  expect(fixtureResponse.status()).toBe(201);
+  const fixture: { fixtureId: string; eventId: string } = await fixtureResponse.json();
+  const context = await browser.newContext();
+  let refreshRequests = 0;
+  let websocketConnections = 0;
+  const page = await context.newPage();
+
+  try {
+    const sessionResponse = await context.request.post(
+      `${apiBaseUrl}/__test/e2e/fixtures/${fixture.fixtureId}/session`,
+      {
+        headers: { 'x-uneventful-e2e-secret': bypassSecret },
+        data: { user: 'organizer' },
+      },
+    );
+    expect(sessionResponse.status()).toBe(204);
+
+    page.on('request', (pageRequest) => {
+      if (pageRequest.url().endsWith('/auth/refresh')) refreshRequests += 1;
+    });
+    page.on('websocket', () => {
+      websocketConnections += 1;
+    });
+    await page.addInitScript(() => {
+      const NativeWebSocket = window.WebSocket;
+      window.__dashboardSockets = [];
+      Object.defineProperty(window, 'WebSocket', {
+        configurable: true,
+        value: class extends NativeWebSocket {
+          constructor(url: string | URL, protocols?: string | string[]) {
+            super(url, protocols);
+            window.__dashboardSockets.push(this);
+          }
+        },
+      });
+    });
+
+    const dashboardResponse = await page.goto(`/events/${fixture.eventId}/dashboard`);
+    expect(dashboardResponse?.status()).toBe(200);
+    await expect(page.getByText('Live updates connected.')).toBeVisible();
+    expect(refreshRequests).toBe(1);
+    expect(websocketConnections).toBe(1);
+
+    await page.evaluate(() => {
+      const actualNow = Date.now.bind(Date);
+      Date.now = () => actualNow() + 20 * 60_000;
+    });
+    await page.evaluate(() => {
+      const socket = window.__dashboardSockets.at(-1);
+      if (!socket) throw new Error('The dashboard WebSocket was not created.');
+      socket.close();
+    });
+    await expect(page.getByText('Live updates connected.')).toBeVisible();
+    await expect.poll(() => refreshRequests).toBe(2);
+    await expect.poll(() => websocketConnections).toBeGreaterThanOrEqual(2);
+    expect(websocketConnections).toBeLessThanOrEqual(3);
+
+    await page.evaluate(() => {
+      const previousNow = Date.now.bind(Date);
+      Date.now = () => previousNow() + 20 * 60_000;
+    });
+    const socketsBeforeRejectedRefresh = websocketConnections;
+    await page.route(`${apiBaseUrl}/auth/refresh`, async (route) => {
+      await route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        headers: {
+          'access-control-allow-credentials': 'true',
+          'access-control-allow-origin': webOrigin,
+        },
+        body: JSON.stringify({ statusCode: 401, message: 'Session expired.' }),
+      });
+    });
+    await page.evaluate(() => {
+      const socket = window.__dashboardSockets.at(-1);
+      if (!socket) throw new Error('The dashboard WebSocket was not created.');
+      socket.close();
+    });
+    await expect(page).toHaveURL(/\/login$/);
+    await expect.poll(() => refreshRequests).toBeGreaterThan(1);
+
+    const settledRefreshCount = refreshRequests;
+    const settledWebsocketCount = websocketConnections;
+    await page.waitForTimeout(6_000);
+    expect(refreshRequests).toBe(settledRefreshCount);
+    expect(settledWebsocketCount).toBeLessThanOrEqual(socketsBeforeRejectedRefresh + 1);
+    expect(websocketConnections).toBe(settledWebsocketCount);
+  } finally {
+    await context.close();
+    const cleanupResponse = await request.delete(
+      `${apiBaseUrl}/__test/e2e/fixtures/${fixture.fixtureId}`,
+      { headers: { 'x-uneventful-e2e-secret': bypassSecret } },
+    );
+    expect(cleanupResponse.status(), await cleanupResponse.text()).toBe(204);
+  }
+});
+
 declare global {
   interface Window {
     __imageCspViolations: string[];
     __qrTicketToken: string;
+    __dashboardSockets: WebSocket[];
   }
 }

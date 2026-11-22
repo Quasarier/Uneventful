@@ -9,6 +9,7 @@ import helmet from 'helmet';
 import type { Environment } from '../../src/config/environment';
 import { HttpExceptionFilter } from '../../src/http-exception.filter';
 import { configureRequestBodyLimits } from '../../src/request-body-limits';
+import { RealtimeIoAdapter } from '../../src/realtime/realtime-io.adapter';
 import { createCorsOptions, helmetOptions } from '../../src/http-security';
 import { assertE2eTestEnvironment } from './test-only-environment';
 import { installDecoratorMetadataForTsx } from './install-decorator-metadata';
@@ -78,6 +79,7 @@ async function bootstrap(): Promise<void> {
   });
   app.enableShutdownHooks();
   const config = app.get(ConfigService<Environment, true>);
+  app.useWebSocketAdapter(new RealtimeIoAdapter(app, config.get('WEB_ORIGIN', { infer: true })));
   app.getHttpAdapter().getInstance().set('trust proxy', 0);
   configureRequestBodyLimits(app);
   app.setGlobalPrefix('api/v1');

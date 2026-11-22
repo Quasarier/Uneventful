@@ -10,7 +10,10 @@ import type { Job } from 'bullmq';
 import Redis from 'ioredis';
 import { createHash, generateKeyPairSync, randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
+import { importPKCS8, SignJWT } from 'jose';
+import { io, type Socket as ClientSocket } from 'socket.io-client';
 import { EventStatus, RsvpStatus, TicketStatus } from '../generated/prisma/client';
+import { AuthRepository } from '../src/auth/auth.repository';
 import { AuthRateLimitService } from '../src/auth/auth-rate-limit.service';
 import { AuthController } from '../src/auth/auth.controller';
 import type { AuthPrincipal } from '../src/auth/auth.types';
@@ -38,6 +41,9 @@ import { CheckinTicketDto } from '../src/rsvps/dto/checkin-ticket.dto';
 import { ManualCheckinLookupDto } from '../src/rsvps/dto/manual-checkin-lookup.dto';
 import { ManualCheckinDto } from '../src/rsvps/dto/manual-checkin.dto';
 import { SyncCheckinsDto } from '../src/rsvps/dto/sync-checkins.dto';
+import { EventDashboardGateway } from '../src/realtime/event-dashboard.gateway';
+import { EventDashboardRepository } from '../src/realtime/event-dashboard.repository';
+import { RealtimeIoAdapter } from '../src/realtime/realtime-io.adapter';
 import { validateEnvironment, type Environment } from '../src/config/environment';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -46,6 +52,7 @@ const migrationDatabaseUrl = process.env.TEST_MIGRATION_DATABASE_URL;
 const redisUrl = process.env.TEST_REDIS_URL;
 const ticketSigningKeys = generateKeyPairSync('ed25519');
 const previousTicketSigningKeys = generateKeyPairSync('ed25519');
+const accessTokenSigningKeys = generateKeyPairSync('rsa', { modulusLength: 2048 });
 
 interface TicketKeyConfiguration {
   current: typeof ticketSigningKeys;
@@ -92,8 +99,12 @@ function configFor(
     CAMPUS_TIME_ZONE: 'America/New_York',
     WEB_ORIGIN: 'http://localhost:3000',
     SESSION_SECRET: `${randomUUID()}${randomUUID()}`,
-    JWT_PRIVATE_KEY_B64: Buffer.from('unused-private-key').toString('base64'),
-    JWT_PUBLIC_KEY_B64: Buffer.from('unused-public-key').toString('base64'),
+    JWT_PRIVATE_KEY_B64: Buffer.from(
+      accessTokenSigningKeys.privateKey.export({ type: 'pkcs8', format: 'pem' }),
+    ).toString('base64'),
+    JWT_PUBLIC_KEY_B64: Buffer.from(
+      accessTokenSigningKeys.publicKey.export({ type: 'spki', format: 'pem' }),
+    ).toString('base64'),
     JWT_KEY_ID: 'rsvp-integration-key',
     TICKET_SIGNING_PRIVATE_KEY_B64: Buffer.from(
       ticketKeys.current.privateKey.export({ format: 'der', type: 'pkcs8' }),
@@ -118,6 +129,20 @@ let repository: RsvpsRepository;
 let rateLimitService: AuthRateLimitService;
 let httpApp: INestApplication | undefined;
 let httpBaseUrl: string;
+let realtimeApps: INestApplication[] = [];
+let realtimeBaseUrls: string[] = [];
+let realtimeGateways: EventDashboardGateway[] = [];
+let realtimeSockets: ClientSocket[] = [];
+let realAuthRealtimeApp: INestApplication | undefined;
+let realAuthRealtimeBaseUrl: string;
+const socketFamiliesByToken = new Map<string, string>();
+const activeSocketFamilies = new Set<string>();
+const socketTokenExpiries = new Map<string, number>();
+let publishDashboardCheckIn = async (eventId: string): Promise<void> => {
+  if (!eventId) {
+    throw new Error('Dashboard event ID is required.');
+  }
+};
 let organizerId: string;
 let otherOrganizerId: string;
 let adminId: string;
@@ -192,6 +217,12 @@ Reflect.defineMetadata(
   [CheckinsService, AuthRateLimitService, ConfigService],
   CheckinsController,
 );
+Reflect.defineMetadata(
+  'design:paramtypes',
+  [AuthService, AuthRateLimitService, ConfigService, EventDashboardRepository],
+  EventDashboardGateway,
+);
+Reflect.defineMetadata('design:paramtypes', [PrismaService], EventDashboardRepository);
 
 const authStub = {
   authenticateAccessToken: async (token: string): Promise<AuthPrincipal> => {
@@ -229,6 +260,28 @@ const authStub = {
   },
 };
 
+const realtimeAuthStub = {
+  authenticateAccessTokenSession: async (token: string) => {
+    const principal = principals.get(token);
+    if (!principal) {
+      throw new UnauthorizedException('Unknown real-time integration-test token.');
+    }
+    let familyId = socketFamiliesByToken.get(token);
+    if (!familyId) {
+      familyId = randomUUID();
+      socketFamiliesByToken.set(token, familyId);
+    }
+    activeSocketFamilies.add(familyId);
+    return {
+      principal,
+      familyId,
+      expiresAt: socketTokenExpiries.get(token) ?? Date.now() + 15 * 60_000,
+    };
+  },
+  isAccessSessionActive: async (session: { familyId: string }) =>
+    activeSocketFamilies.has(session.familyId),
+};
+
 @Module({
   controllers: [AuthController, RsvpsController, MyRsvpsController, CheckinsController],
   providers: [
@@ -246,7 +299,9 @@ const authStub = {
     {
       provide: CheckinsRepository,
       useFactory: (ticketSigning: TicketSigningService) =>
-        new CheckinsRepository(activePrisma, ticketSigning),
+        new CheckinsRepository(activePrisma, ticketSigning, {
+          publishCheckIn: (eventId: string) => publishDashboardCheckIn(eventId),
+        }),
       inject: [TicketSigningService],
     },
     {
@@ -266,6 +321,41 @@ const authStub = {
   ],
 })
 class RsvpHttpIntegrationModule {}
+
+@Module({
+  providers: [
+    EventDashboardGateway,
+    EventDashboardRepository,
+    { provide: PrismaService, useFactory: () => activePrisma },
+    { provide: AuthService, useValue: realtimeAuthStub },
+    { provide: AuthRateLimitService, useFactory: () => rateLimitService },
+    { provide: ConfigService, useFactory: () => configFor(appDatabaseUrl!) },
+  ],
+})
+class RealtimeIntegrationModule {}
+
+@Module({
+  controllers: [AuthController],
+  providers: [
+    EventDashboardGateway,
+    EventDashboardRepository,
+    { provide: PrismaService, useFactory: () => activePrisma },
+    {
+      provide: AuthRepository,
+      useFactory: () => new AuthRepository(activePrisma),
+    },
+    {
+      provide: AuthService,
+      useFactory: (config: ConfigService<Environment, true>, repository: AuthRepository) =>
+        new AuthService(config, repository),
+      inject: [ConfigService, AuthRepository],
+    },
+    { provide: AuthRateLimitService, useFactory: () => rateLimitService },
+    { provide: GoogleOidcService, useValue: {} },
+    { provide: ConfigService, useFactory: () => configFor(appDatabaseUrl!) },
+  ],
+})
+class RealAuthRealtimeIntegrationModule {}
 
 describe('RSVP PostgreSQL concurrency integration', () => {
   beforeAll(async () => {
@@ -304,9 +394,61 @@ describe('RSVP PostgreSQL concurrency integration', () => {
       throw new Error('Could not determine RSVP integration server address.');
     }
     httpBaseUrl = `http://127.0.0.1:${address.port}/api/v1`;
+
+    realtimeApps = [];
+    realtimeBaseUrls = [];
+    realtimeGateways = [];
+    for (let index = 0; index < 2; index += 1) {
+      const realtimeApp = await NestFactory.create(RealtimeIntegrationModule, { logger: false });
+      realtimeApp.useWebSocketAdapter(new RealtimeIoAdapter(realtimeApp, 'http://localhost:3000'));
+      await realtimeApp.listen(0, '127.0.0.1');
+      const realtimeAddress = realtimeApp.getHttpServer().address();
+      if (!realtimeAddress || typeof realtimeAddress === 'string') {
+        throw new Error('Could not determine real-time integration server address.');
+      }
+      realtimeApps.push(realtimeApp);
+      realtimeBaseUrls.push(`http://127.0.0.1:${realtimeAddress.port}`);
+      realtimeGateways.push(realtimeApp.get(EventDashboardGateway));
+    }
+    await Promise.all(realtimeGateways.map(waitForGatewayReady));
+    const firstGateway = realtimeGateways[0];
+    if (!firstGateway) {
+      throw new Error('The first real-time integration gateway did not start.');
+    }
+    publishDashboardCheckIn = (eventId) => firstGateway.publishCheckIn(eventId);
+
+    realAuthRealtimeApp = await NestFactory.create(RealAuthRealtimeIntegrationModule, {
+      logger: false,
+    });
+    realAuthRealtimeApp.useWebSocketAdapter(
+      new RealtimeIoAdapter(realAuthRealtimeApp, 'http://localhost:3000'),
+    );
+    realAuthRealtimeApp.setGlobalPrefix('api/v1');
+    realAuthRealtimeApp.useGlobalPipes(
+      new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
+    );
+    realAuthRealtimeApp.useGlobalFilters(new HttpExceptionFilter());
+    const realAuthReflector = realAuthRealtimeApp.get(Reflector);
+    const realAuthConfig = configFor(appDatabaseUrl!);
+    const realAuthService = realAuthRealtimeApp.get(AuthService);
+    realAuthRealtimeApp.useGlobalGuards(
+      new JwtAuthGuard(realAuthReflector, realAuthService, rateLimitService, realAuthConfig),
+      new GlobalApiRateLimitGuard(rateLimitService, realAuthReflector, realAuthConfig),
+      new RolesGuard(realAuthReflector),
+    );
+    await realAuthRealtimeApp.listen(0, '127.0.0.1');
+    const realAuthAddress = realAuthRealtimeApp.getHttpServer().address();
+    if (!realAuthAddress || typeof realAuthAddress === 'string') {
+      throw new Error('Could not determine the real-auth integration server address.');
+    }
+    realAuthRealtimeBaseUrl = `http://127.0.0.1:${realAuthAddress.port}/api/v1`;
+    await waitForGatewayReady(realAuthRealtimeApp.get(EventDashboardGateway));
   });
 
   beforeEach(async () => {
+    socketFamiliesByToken.clear();
+    activeSocketFamilies.clear();
+    socketTokenExpiries.clear();
     adminId = randomUUID();
     organizerId = randomUUID();
     otherOrganizerId = randomUUID();
@@ -417,6 +559,10 @@ describe('RSVP PostgreSQL concurrency integration', () => {
   });
 
   afterEach(async () => {
+    for (const socket of realtimeSockets) {
+      socket.disconnect();
+    }
+    realtimeSockets = [];
     if (eventIds.length > 0) {
       await migrationPrisma.rsvpPromotionOutbox.deleteMany({
         where: { eventId: { in: eventIds } },
@@ -456,6 +602,10 @@ describe('RSVP PostgreSQL concurrency integration', () => {
   });
 
   afterAll(async () => {
+    await Promise.all(realtimeApps.map((app) => app.close()));
+    realtimeApps = [];
+    await realAuthRealtimeApp?.close();
+    realAuthRealtimeApp = undefined;
     await httpApp?.close();
     rateLimitService?.onModuleDestroy();
     await Promise.all([appPrisma?.$disconnect(), migrationPrisma?.$disconnect()]);
@@ -558,6 +708,286 @@ describe('RSVP PostgreSQL concurrency integration', () => {
         where: { entityId: ticketId, action: 'CHECKIN_QR_DUPLICATE' },
       }),
     ).toBe(49);
+  });
+
+  it('masks student and other-club dashboard joins with the same failure', async () => {
+    const studentSocket = connectRealtime(0, studentId(0));
+    const otherOrganizerSocket = connectRealtime(0, otherOrganizerId);
+    await Promise.all([
+      waitForSocketConnect(studentSocket),
+      waitForSocketConnect(otherOrganizerSocket),
+    ]);
+
+    const responses = await Promise.all([
+      emitDashboardJoin(studentSocket, primaryEventId),
+      emitDashboardJoin(otherOrganizerSocket, primaryEventId),
+    ]);
+    expect(responses[0]).toEqual({ ok: false, error: 'Event not found.' });
+    expect(responses[1]).toEqual(responses[0]);
+  });
+
+  it('evicts a socket from the dashboard room after active club membership is removed', async () => {
+    const socket = connectRealtime(0, organizerId);
+    await waitForSocketConnect(socket);
+    await expect(emitDashboardJoin(socket, primaryEventId)).resolves.toMatchObject({ ok: true });
+
+    const revoked = waitForSocketEvent(socket, 'dashboard:access-revoked', 8_000);
+    await appPrisma.clubMembership.updateMany({
+      where: { userId: organizerId, clubId },
+      data: { status: 'LEFT' },
+    });
+    await expect(revoked).resolves.toMatchObject({ eventId: primaryEventId });
+
+    let updateCount = 0;
+    socket.on('dashboard:update', () => {
+      updateCount += 1;
+    });
+    await realtimeGateways[0]?.publishCheckIn(primaryEventId);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(updateCount).toBe(0);
+  }, 12_000);
+
+  it('disconnects sockets when the access token expires or its session family is revoked', async () => {
+    const expiringToken = randomUUID();
+    principals.set(expiringToken, {
+      id: organizerId,
+      role: 'ORGANIZER',
+      tokenVersion: 0,
+    });
+    socketTokenExpiries.set(expiringToken, Date.now() + 500);
+    const expiringSocket = connectRealtime(0, expiringToken);
+    await waitForSocketConnect(expiringSocket);
+    await expect(waitForSocketEvent(expiringSocket, 'disconnect', 3_000)).resolves.toBe(
+      'io server disconnect',
+    );
+
+    const revocableSocket = connectRealtime(0, organizerId);
+    await waitForSocketConnect(revocableSocket);
+    const familyId = socketFamiliesByToken.get(organizerId);
+    if (!familyId) throw new Error('Expected the integration socket to have a session family.');
+    const disconnected = waitForSocketEvent(revocableSocket, 'disconnect', 3_000);
+    await rateLimitService.publishSessionRevocation({ familyId });
+    await expect(disconnected).resolves.toBe('io server disconnect');
+  }, 8_000);
+
+  it('uses real auth to disconnect on HTTP logout and reject reconnects', async () => {
+    if (!realAuthRealtimeApp) {
+      throw new Error('The real-auth integration server did not start.');
+    }
+    const auth = realAuthRealtimeApp.get(AuthService);
+    const session = await auth.completeGoogleLogin({
+      googleSubject: organizerId,
+      email: `${organizerId}@example.edu`,
+      firstName: 'RSVP',
+      lastName: 'Organizer',
+      avatarUrl: null,
+    });
+    const authenticatedSession = await auth.authenticateAccessTokenSession(session.accessToken);
+    const expiredToken = await issueExpiredAccessToken(authenticatedSession.familyId);
+    const expiredSocket = connectToRealAuthRealtime(expiredToken);
+    await expect(waitForSocketConnect(expiredSocket)).rejects.toThrow();
+
+    const socket = connectToRealAuthRealtime(session.accessToken);
+    await waitForSocketConnect(socket);
+    await expect(emitDashboardJoin(socket, primaryEventId)).resolves.toMatchObject({ ok: true });
+
+    const logoutStartedAt = performance.now();
+    const disconnected = waitForSocketEvent(socket, 'disconnect', 3_000).then((reason) => ({
+      delayMs: performance.now() - logoutStartedAt,
+      reason,
+    }));
+    const logoutResponse = await fetch(`${realAuthRealtimeBaseUrl}/auth/logout`, {
+      method: 'POST',
+      headers: {
+        Cookie: `__Secure-uneventful_refresh=${session.refreshToken}`,
+        Origin: 'http://localhost:3000',
+        'X-Uneventful-CSRF': '1',
+      },
+    });
+    expect(logoutResponse.status).toBe(204);
+    const disconnectResult = await disconnected;
+    expect(disconnectResult.reason).toBe('io server disconnect');
+    expect(disconnectResult.delayMs).toBeLessThan(3_000);
+    process.stdout.write(
+      `Real-auth logout disconnected the dashboard socket in ${disconnectResult.delayMs.toFixed(1)} ms.\n`,
+    );
+
+    const rejoiningSocket = connectToRealAuthRealtime(session.accessToken);
+    await expect(waitForSocketConnect(rejoiningSocket)).rejects.toThrow();
+    expect(rejoiningSocket.connected).toBe(false);
+  }, 12_000);
+
+  it('rejects a spoofed handshake origin and caps each user at three live sockets', async () => {
+    const spoofedSocket = connectRealtime(0, organizerId, 'https://attacker.example');
+    await expect(waitForSocketConnect(spoofedSocket)).rejects.toThrow();
+
+    const allowedSockets = [0, 1, 2].map(() => connectRealtime(0, organizerId));
+    await Promise.all(allowedSockets.map((socket) => waitForSocketConnect(socket)));
+    const excessSocket = connectRealtime(0, organizerId);
+    await expect(waitForSocketConnect(excessSocket)).rejects.toThrow();
+  });
+
+  it('rejects malformed, oversized, and over-rate dashboard messages', async () => {
+    const malformedSocket = connectRealtime(0, organizerId);
+    await waitForSocketConnect(malformedSocket);
+    await expect(
+      emitSocketAck(malformedSocket, 'dashboard:join', { eventId: 'not-a-uuid' }),
+    ).resolves.toEqual({ ok: false, error: 'Invalid request.' });
+
+    const oversizedSocket = connectRealtime(0, organizerId);
+    await waitForSocketConnect(oversizedSocket);
+    const oversizedDisconnect = waitForSocketEvent(oversizedSocket, 'disconnect', 3_000);
+    oversizedSocket.emit('dashboard:join', {
+      eventId: primaryEventId,
+      ignored: 'x'.repeat(5_000),
+    });
+    await expect(oversizedDisconnect).resolves.toMatch(/close|disconnect/);
+
+    const rateLimitedSocket = connectRealtime(0, organizerId);
+    await waitForSocketConnect(rateLimitedSocket);
+    const disconnected = waitForSocketEvent(rateLimitedSocket, 'disconnect', 5_000);
+    for (let index = 0; index < 21; index += 1) {
+      rateLimitedSocket.emit('dashboard:join', { eventId: primaryEventId });
+    }
+    await expect(disconnected).resolves.toBe('io server disconnect');
+  }, 12_000);
+
+  it('broadcasts only one allowlisted dashboard update for fifty concurrent ticket scans', async () => {
+    const rsvp = await createRsvpWithTicket(primaryEventId, studentId(0));
+    const socket = connectRealtime(1, organizerId);
+    await waitForSocketConnect(socket);
+    await expect(emitDashboardJoin(socket, primaryEventId)).resolves.toMatchObject({
+      ok: true,
+      data: { checkInCount: 0 },
+    });
+
+    const updates: unknown[] = [];
+    socket.on('dashboard:update', (update: unknown) => updates.push(update));
+    const firstUpdate = waitForSocketEvent(socket, 'dashboard:update', 5_000);
+    const responses = await Promise.all(
+      Array.from({ length: 50 }, () =>
+        requestAs(organizerId, 'POST', `/events/${primaryEventId}/checkins`, {
+          ticket: rsvp.ticketToken,
+          deviceId: randomUUID(),
+        }),
+      ),
+    );
+    expect(responses.every((response) => response.status === 201)).toBe(true);
+    await expect(firstUpdate).resolves.toMatchObject({
+      eventId: primaryEventId,
+      checkInCount: 1,
+      rsvpCount: 1,
+      recentCheckIns: [{ displayName: 'Student0 Integration' }],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(updates).toHaveLength(1);
+    const update = updates[0];
+    expect(update).toMatchObject({
+      eventId: primaryEventId,
+      checkInCount: 1,
+      rsvpCount: 1,
+      capacity: 50,
+    });
+    expect(Object.keys(update as Record<string, unknown>).sort()).toEqual([
+      'attendanceRatio',
+      'capacity',
+      'checkInCount',
+      'eventId',
+      'recentCheckIns',
+      'rsvpCount',
+    ]);
+    expect(
+      Object.keys(
+        (update as { recentCheckIns: Array<Record<string, unknown>> }).recentCheckIns[0]!,
+      ).sort(),
+    ).toEqual(['checkedInAt', 'displayName']);
+    expect(JSON.stringify(update)).not.toContain('ticketId');
+    expect(JSON.stringify(update)).not.toContain('email');
+
+    const storedTicket = await appPrisma.ticket.findUniqueOrThrow({
+      where: { rsvpId: rsvp.id },
+      select: { ticketIdHash: true },
+    });
+    const offlineSync = await requestAs(
+      organizerId,
+      'POST',
+      `/events/${primaryEventId}/checkins/sync`,
+      {
+        scans: [0, 1].map(() => ({
+          ticketIdHash: storedTicket.ticketIdHash,
+          deviceId: randomUUID(),
+          scannedAt: new Date().toISOString(),
+        })),
+      },
+    );
+    expect(offlineSync.status).toBe(201);
+    await expect(offlineSync.json()).resolves.toMatchObject({
+      data: [{ status: 'DUPLICATE' }, { status: 'DUPLICATE' }],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(updates).toHaveLength(1);
+    expect(await appPrisma.checkIn.count({ where: { ticket: { rsvpId: rsvp.id } } })).toBe(1);
+  }, 30_000);
+
+  it('does not broadcast a check-in whose database transaction rolls back', async () => {
+    const rsvp = await createRsvpWithTicket(primaryEventId, studentId(0));
+    const socket = connectRealtime(0, organizerId);
+    await waitForSocketConnect(socket);
+    await expect(emitDashboardJoin(socket, primaryEventId)).resolves.toMatchObject({ ok: true });
+    await migrationPrisma.$executeRawUnsafe(`
+      CREATE OR REPLACE FUNCTION test_fail_dashboard_checkin_audit()
+      RETURNS trigger AS $$
+      BEGIN
+        IF NEW.action = 'CHECKIN_QR' THEN
+          RAISE EXCEPTION 'simulated check-in rollback';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql
+    `);
+    await migrationPrisma.$executeRawUnsafe(`
+      CREATE TRIGGER test_fail_dashboard_checkin_audit
+      BEFORE INSERT ON "audit_logs"
+      FOR EACH ROW
+      EXECUTE FUNCTION test_fail_dashboard_checkin_audit()
+    `);
+    const updatePromise = expectNoSocketEvent(socket, 'dashboard:update', 300);
+    try {
+      const response = await requestAs(organizerId, 'POST', `/events/${primaryEventId}/checkins`, {
+        ticket: rsvp.ticketToken,
+        deviceId: randomUUID(),
+      });
+      expect(response.status).toBe(500);
+      await updatePromise;
+      expect(
+        await appPrisma.ticket.findUniqueOrThrow({ where: { rsvpId: rsvp.id } }),
+      ).toMatchObject({ status: TicketStatus.ISSUED });
+      expect(await appPrisma.checkIn.count({ where: { ticket: { rsvpId: rsvp.id } } })).toBe(0);
+    } finally {
+      await migrationPrisma.$executeRawUnsafe(
+        'DROP TRIGGER IF EXISTS test_fail_dashboard_checkin_audit ON "audit_logs"',
+      );
+      await migrationPrisma.$executeRawUnsafe(
+        'DROP FUNCTION IF EXISTS test_fail_dashboard_checkin_audit()',
+      );
+    }
+  }, 10_000);
+
+  it('fans a dashboard update from one API instance to a socket connected to the other', async () => {
+    expect(realtimeApps).toHaveLength(2);
+    expect(new Set(realtimeBaseUrls).size).toBe(2);
+    const socket = connectRealtime(0, organizerId);
+    await waitForSocketConnect(socket);
+    await expect(emitDashboardJoin(socket, primaryEventId)).resolves.toMatchObject({ ok: true });
+    const updatePromise = waitForSocketEvent(socket, 'dashboard:update', 5_000);
+
+    await realtimeGateways[1]?.publishCheckIn(primaryEventId);
+
+    await expect(updatePromise).resolves.toMatchObject({
+      eventId: primaryEventId,
+      checkInCount: 0,
+      capacity: 50,
+    });
   });
 
   it('accepts tickets signed by the previous public key during rotation', async () => {
@@ -1883,6 +2313,152 @@ async function createRsvpWithTicket(
     throw new Error('RSVP fixture did not return a signed ticket.');
   }
   return { id: body.id, ticketToken: body.ticketToken };
+}
+
+function connectRealtime(
+  serverIndex: number,
+  token: string,
+  origin = 'http://localhost:3000',
+): ClientSocket {
+  const serverUrl = realtimeBaseUrls.at(serverIndex);
+  if (!serverUrl) {
+    throw new Error('The requested real-time integration server is unavailable.');
+  }
+  const socket = io(`${serverUrl}/realtime`, {
+    autoConnect: false,
+    auth: { accessToken: token },
+    extraHeaders: { Origin: origin },
+    reconnection: false,
+    timeout: 5_000,
+    transports: ['websocket'],
+  });
+  realtimeSockets.push(socket);
+  return socket;
+}
+
+function connectToRealAuthRealtime(
+  accessToken: string,
+  origin = 'http://localhost:3000',
+): ClientSocket {
+  const socket = io(`${realAuthRealtimeBaseUrl.replace(/\/api\/v1$/, '')}/realtime`, {
+    autoConnect: false,
+    auth: { accessToken },
+    extraHeaders: { Origin: origin },
+    reconnection: false,
+    timeout: 5_000,
+    transports: ['websocket'],
+  });
+  realtimeSockets.push(socket);
+  return socket;
+}
+
+async function issueExpiredAccessToken(familyId: string): Promise<string> {
+  const config = configFor(appDatabaseUrl!);
+  const privateKey = await importPKCS8(
+    Buffer.from(config.get('JWT_PRIVATE_KEY_B64', { infer: true }), 'base64').toString('utf8'),
+    'RS256',
+  );
+  const nowSeconds = Math.floor(Date.now() / 1_000);
+  return new SignJWT({
+    role: 'ORGANIZER',
+    tokenVersion: 0,
+    sid: familyId,
+    jti: randomUUID(),
+  })
+    .setProtectedHeader({
+      alg: 'RS256',
+      kid: config.get('JWT_KEY_ID', { infer: true }),
+    })
+    .setSubject(organizerId)
+    .setIssuer(config.get('JWT_ISSUER', { infer: true }))
+    .setAudience(config.get('JWT_AUDIENCE', { infer: true }))
+    .setIssuedAt(nowSeconds - 120)
+    .setExpirationTime(nowSeconds - 60)
+    .sign(privateKey);
+}
+
+function waitForSocketConnect(socket: ClientSocket, timeoutMs = 5_000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Socket.IO connection timed out.')), timeoutMs);
+    socket.once('connect', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    socket.once('connect_error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    socket.connect();
+  });
+}
+
+async function waitForGatewayReady(gateway: EventDashboardGateway): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (!gateway.isReady() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  if (!gateway.isReady()) {
+    throw new Error('Socket.IO Redis adapter did not become ready.');
+  }
+}
+
+function waitForSocketEvent(
+  socket: ClientSocket,
+  eventName: string,
+  timeoutMs: number,
+): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`Timed out waiting for Socket.IO event ${eventName}.`)),
+      timeoutMs,
+    );
+    socket.once(eventName, (...args: unknown[]) => {
+      clearTimeout(timer);
+      resolve(args[0]);
+    });
+  });
+}
+
+function emitSocketAck(
+  socket: ClientSocket,
+  eventName: string,
+  payload: unknown,
+): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error('Socket.IO acknowledgement timed out.')),
+      5_000,
+    );
+    socket.emit(eventName, payload, (response: Record<string, unknown>) => {
+      clearTimeout(timer);
+      resolve(response);
+    });
+  });
+}
+
+function emitDashboardJoin(
+  socket: ClientSocket,
+  eventId: string,
+): Promise<Record<string, unknown>> {
+  return emitSocketAck(socket, 'dashboard:join', { eventId });
+}
+
+function expectNoSocketEvent(
+  socket: ClientSocket,
+  eventName: string,
+  timeoutMs: number,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onEvent = () => {
+      clearTimeout(timer);
+      reject(new Error(`Unexpected Socket.IO event ${eventName}.`));
+    };
+    const timer = setTimeout(() => {
+      socket.off(eventName, onEvent);
+      resolve();
+    }, timeoutMs);
+    socket.once(eventName, onEvent);
+  });
 }
 
 function requestAs(
