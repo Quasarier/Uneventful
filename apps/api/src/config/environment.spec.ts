@@ -12,6 +12,7 @@ const validEnvironment = {
   GOOGLE_CLIENT_SECRET: 'test-client-secret',
   GOOGLE_CALLBACK_URL: 'http://localhost:3001/api/v1/auth/google/callback',
   UNIVERSITY_EMAIL_DOMAIN: 'example.edu',
+  CAMPUS_TIME_ZONE: 'America/New_York',
   WEB_ORIGIN: 'http://localhost:3000',
   SESSION_SECRET: 'a-test-session-secret-with-at-least-32-characters',
   JWT_PRIVATE_KEY_B64: Buffer.from('test-private-key').toString('base64'),
@@ -73,6 +74,13 @@ describe('validateEnvironment', () => {
         WEB_ORIGIN: 'http://localhost:3000/callback',
       }),
     ).toThrow(/WEB_ORIGIN/);
+  });
+
+  it('requires a valid IANA campus time zone', () => {
+    expect(validateEnvironment(validEnvironment).CAMPUS_TIME_ZONE).toBe('America/New_York');
+    expect(() =>
+      validateEnvironment({ ...validEnvironment, CAMPUS_TIME_ZONE: 'Not/A_Timezone' }),
+    ).toThrow(/CAMPUS_TIME_ZONE/);
   });
 
   it('requires valid object storage configuration', () => {

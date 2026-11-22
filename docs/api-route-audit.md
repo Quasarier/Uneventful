@@ -1,4 +1,4 @@
-# API route inventory and Stage 7 check-in audit
+# API route inventory and security audit
 
 The route inventory below was regenerated from Nest controller/module metadata with:
 
@@ -9,7 +9,9 @@ corepack pnpm --filter @uneventful/api routes
 ## Generated routes
 
 ```text
+DELETE /api/v1/events/:id
 DELETE /api/v1/events/:id/rsvp
+DELETE /api/v1/venues/:id
 GET /api/v1/auth/google
 GET /api/v1/auth/google/callback
 GET /api/v1/auth/me
@@ -23,7 +25,10 @@ GET /api/v1/events/:id/rsvp/status
 GET /api/v1/health/live
 GET /api/v1/health/ready
 GET /api/v1/rsvps/me
+GET /api/v1/venues
+GET /api/v1/venues/:id
 PATCH /api/v1/events/:id
+PATCH /api/v1/venues/:id
 POST /api/v1/auth/logout
 POST /api/v1/auth/logout-all
 POST /api/v1/auth/refresh
@@ -39,6 +44,9 @@ POST /api/v1/events/:id/reject
 POST /api/v1/events/:id/rsvp
 POST /api/v1/events/:id/rsvp/ticket
 POST /api/v1/events/:id/submit
+POST /api/v1/events/series
+POST /api/v1/venues
+POST /api/v1/venues/conflicts
 ```
 
 ## Stage 6 identity and RSVP read routes
@@ -62,3 +70,16 @@ These are defense-in-depth checks: the guards authenticate/authorize every non-p
 | `POST /api/v1/events/:id/checkins/manual` | Active event-club organizers and admins only; checks in a confirmed attendee by RSVP ID.                                                                     | Private/no-store; per-user check-in limit; scanner, time and device ID audited.            | `provides a bounded no-store manifest and audited allowlisted manual lookup` in `apps/api/test/rsvps.integration.ts`.                                                                                                                                                                                                                                                                               |
 
 Students and organizers without active event-club membership receive a masked 404 on every check-in route, as covered by `masks every check-in route from students and organizers outside the event club` in `apps/api/test/rsvps.integration.ts`. `enforces the per-user check-in rate limit with Retry-After` covers the check-in-specific limiter. Ticket signatures are validated with Ed25519; only the ticket UUID hash and authoritative state are stored. The scanner persists public manifest data and queued hashes/timestamps/device IDs only; it clears event-local data on logout and when the active scanner observes event end.
+
+## Stage 8 venues and bookings
+
+| Route                                                                                                                                                                                                                   | Authorization and response scope                                                                                                                                                                                           | Cache, rate limit, and audit                                                 | Integration coverage                                                                                                                                                             |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/v1/venues` and `GET /api/v1/venues/:id`                                                                                                                                                                       | Authenticated users can read active venue summaries; inactive or unknown venues are masked with the same 404 for non-admins. DTOs expose only venue identity, building, capacity, buffer, active state, and weekday hours. | Private/no-store responses.                                                  | `limits venue management to admins and returns masked 404s for inactive venues` in `apps/api/test/events.integration.ts`.                                                        |
+| `POST /api/v1/venues`, `PATCH /api/v1/venues/:id`, `DELETE /api/v1/venues/:id`                                                                                                                                          | Administrators only; updates and retirement affect allowlisted fields.                                                                                                                                                     | Per-user write rate limit; every change is audited.                          | `limits venue management to admins and returns masked 404s for inactive venues`.                                                                                                 |
+| `POST /api/v1/venues/conflicts`                                                                                                                                                                                         | Organizer with active membership when an event ID is supplied, or administrator; returns safe slot bounds and at most three available alternatives.                                                                        | Private/no-store; per-user conflict-check limit.                             | `reports safe booking conflicts and excludes occupied or inactive venues from alternatives` and `checks buffer, capacity, availability hours, past starts, and inactive venues`. |
+| `POST /api/v1/events`, `PATCH /api/v1/events/:id`, `POST /api/v1/events/:id/submit`, `POST /api/v1/events/:id/approve`, `POST /api/v1/events/:id/reject`, `POST /api/v1/events/:id/cancel`, `DELETE /api/v1/events/:id` | Existing event/club authorization applies. Venue changes and status transitions synchronize booking state transactionally; delete soft-deletes and releases the reservation.                                               | Per-user booking-write limit; event and booking changes are audited.         | `serializes 20 competing booking updates so exactly one approved booking wins` and `releases venue slots on reject, cancel, and delete`.                                         |
+| `POST /api/v1/events/series`                                                                                                                                                                                            | Organizer with active club membership or administrator; bounded daily, weekly, or monthly series with exception dates, maximum 52 occurrences. All occurrences are checked and committed atomically.                       | Per-user booking-write limit; series, event, and booking writes are audited. | `creates recurring bookings atomically, applies exception dates, and caps occurrences`; DST and interval properties in `apps/api/src/venues/venue-time.spec.ts`.                 |
+| Venue conflict and event/venue booking writes                                                                                                                                                                           | Each endpoint fails closed on limiter failure and returns `429` with `Retry-After`.                                                                                                                                        | Rate-limit keys are per authenticated user.                                  | `rate-limits venue checks and booking writes with Retry-After` in `apps/api/test/events.integration.ts`.                                                                         |
+
+Booking writes serialize on a venue-row lock and retain the PostgreSQL GiST exclusion constraint as the final overlapping-approved-booking guard. Event instants are UTC; venue availability is interpreted using validated `CAMPUS_TIME_ZONE`. Conflict responses never include the other event's or organizer's details.

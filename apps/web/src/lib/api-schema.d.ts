@@ -65,11 +65,83 @@ export interface paths {
     /** List visible events */
     get: operations['listEvents'];
     put?: never;
-    post?: never;
+    /** Create a draft event with an optional venue booking */
+    post: operations['createEvent'];
     delete?: never;
     options?: never;
     head?: never;
     patch?: never;
+    trace?: never;
+  };
+  '/events/series': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Atomically create a bounded recurring event series */
+    post: operations['createEventSeries'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/venues': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List active venues */
+    get: operations['listVenues'];
+    put?: never;
+    /** Create a venue (administrators only) */
+    post: operations['createVenue'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/venues/conflicts': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Check venue availability and suggest alternatives */
+    post: operations['checkVenueConflicts'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/venues/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get an active venue */
+    get: operations['getVenue'];
+    put?: never;
+    post?: never;
+    /** Retire a venue (administrators only) */
+    delete: operations['retireVenue'];
+    options?: never;
+    head?: never;
+    /** Update a venue (administrators only) */
+    patch: operations['updateVenue'];
     trace?: never;
   };
   '/events/{id}': {
@@ -83,10 +155,12 @@ export interface paths {
     get: operations['getEvent'];
     put?: never;
     post?: never;
-    delete?: never;
+    /** Soft-delete an event and release its venue booking */
+    delete: operations['deleteEvent'];
     options?: never;
     head?: never;
-    patch?: never;
+    /** Update an event and synchronize its venue booking */
+    patch: operations['updateEvent'];
     trace?: never;
   };
   '/events/{id}/attendees': {
@@ -301,6 +375,132 @@ export interface components {
       name: string;
       slug: string;
     };
+    VenueAvailabilityHour: {
+      weekday: number;
+      opensAt: string;
+      closesAt: string;
+    };
+    Venue: {
+      /** Format: uuid */
+      id: string;
+      name: string;
+      building: string | null;
+      capacity: number;
+      bufferMinutes: number;
+      isActive: boolean;
+      availabilityHours: components['schemas']['VenueAvailabilityHour'][];
+    };
+    VenueList: {
+      data: components['schemas']['Venue'][];
+    };
+    CreateVenueRequest: {
+      name: string;
+      building?: string | null;
+      capacity: number;
+      bufferMinutes: number;
+      availabilityHours: components['schemas']['VenueAvailabilityHour'][];
+    };
+    UpdateVenueRequest: {
+      name?: string;
+      building?: string | null;
+      capacity?: number;
+      bufferMinutes?: number;
+      isActive?: boolean;
+      availabilityHours?: components['schemas']['VenueAvailabilityHour'][];
+    };
+    RecurrenceRule: {
+      /** @enum {string} */
+      frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY';
+      interval: number;
+      count?: number;
+      /** Format: date */
+      untilDate?: string;
+    };
+    CreateEventRequest: {
+      title: string;
+      description: string;
+      /** Format: date-time */
+      startAt: string;
+      /** Format: date-time */
+      endAt: string;
+      timeZone: string;
+      capacity?: number | null;
+      expectedAttendance?: number | null;
+      isPublic: boolean;
+      /** Format: uuid */
+      clubId: string;
+      /** Format: uuid */
+      categoryId: string;
+      /** Format: uuid */
+      venueId?: string | null;
+    };
+    UpdateEventRequest: {
+      title?: string;
+      description?: string;
+      /** Format: date-time */
+      startAt?: string;
+      /** Format: date-time */
+      endAt?: string;
+      timeZone?: string;
+      capacity?: number | null;
+      expectedAttendance?: number | null;
+      isPublic?: boolean;
+      /** Format: uuid */
+      categoryId?: string;
+      /** Format: uuid */
+      venueId?: string | null;
+    };
+    CreateEventSeriesRequest: components['schemas']['CreateEventRequest'] & {
+      recurrence: components['schemas']['RecurrenceRule'];
+      exceptionDates: string[];
+    };
+    EventSeriesResult: {
+      /** Format: uuid */
+      seriesId: string;
+      events: components['schemas']['Event'][];
+    };
+    VenueSlot: {
+      /** Format: date-time */
+      startAt: string;
+      /** Format: date-time */
+      endAt: string;
+    };
+    VenueAlternative: components['schemas']['VenueSlot'] & {
+      /** Format: uuid */
+      venueId: string;
+      name: string;
+      building: string | null;
+    };
+    VenueConflict: {
+      /** @constant */
+      statusCode: 409;
+      /** @constant */
+      code: 'CONFLICT';
+      message: string;
+      path: string;
+      reasons: ('BOOKING_CONFLICT' | 'CAPACITY' | 'OUTSIDE_HOURS' | 'PAST_START')[];
+      conflicts: components['schemas']['VenueSlot'][];
+      alternatives: components['schemas']['VenueAlternative'][];
+    };
+    VenueConflictRequest: {
+      /** Format: uuid */
+      venueId: string;
+      /** Format: date-time */
+      startAt: string;
+      /** Format: date-time */
+      endAt: string;
+      expectedAttendance: number;
+      /** Format: uuid */
+      eventId?: string;
+      recurrence?: components['schemas']['RecurrenceRule'];
+      exceptionDates?: string[];
+    };
+    VenueAvailabilityResult: {
+      /** @constant */
+      available: true;
+      conflicts: components['schemas']['VenueSlot'][];
+      alternatives: components['schemas']['VenueAlternative'][];
+    };
     Event: {
       /** Format: uuid */
       id: string;
@@ -315,7 +515,9 @@ export interface components {
       endAt: string;
       timeZone: string;
       capacity: number | null;
+      expectedAttendance: number | null;
       isPublic: boolean;
+      venue: components['schemas']['EventVenue'] | null;
       /** Format: uuid */
       clubId: string;
       /** Format: uuid */
@@ -328,6 +530,12 @@ export interface components {
       hasImage: boolean;
       club: components['schemas']['EventClub'];
       category: components['schemas']['EventCategory'];
+    };
+    EventVenue: {
+      /** Format: uuid */
+      id: string;
+      name: string;
+      building: string | null;
     };
     EventPage: {
       data: components['schemas']['Event'][];
@@ -496,9 +704,19 @@ export interface components {
         'application/json': components['schemas']['ApiError'];
       };
     };
+    /** @description The venue conflicts with the requested event time or requirements. */
+    VenueConflict: {
+      headers: {
+        [name: string]: unknown;
+      };
+      content: {
+        'application/json': components['schemas']['VenueConflict'];
+      };
+    };
   };
   parameters: {
     EventId: string;
+    VenueId: string;
   };
   requestBodies: never;
   headers: never;
@@ -600,6 +818,209 @@ export interface operations {
       401: components['responses']['Error'];
     };
   };
+  createEvent: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateEventRequest'];
+      };
+    };
+    responses: {
+      /** @description The created event. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Event'];
+        };
+      };
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  createEventSeries: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateEventSeriesRequest'];
+      };
+    };
+    responses: {
+      /** @description The created series and its events. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['EventSeriesResult'];
+        };
+      };
+      404: components['responses']['Error'];
+      409: components['responses']['VenueConflict'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  listVenues: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Active venues with allowlisted availability details. */
+      200: {
+        headers: {
+          'Cache-Control'?: 'private, no-store';
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['VenueList'];
+        };
+      };
+    };
+  };
+  createVenue: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateVenueRequest'];
+      };
+    };
+    responses: {
+      /** @description The created venue. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Venue'];
+        };
+      };
+      429: components['responses']['RateLimited'];
+    };
+  };
+  checkVenueConflicts: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['VenueConflictRequest'];
+      };
+    };
+    responses: {
+      /** @description The requested venue is available. */
+      200: {
+        headers: {
+          'Cache-Control'?: 'private, no-store';
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['VenueAvailabilityResult'];
+        };
+      };
+      404: components['responses']['Error'];
+      409: components['responses']['VenueConflict'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  getVenue: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components['parameters']['VenueId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The venue. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Venue'];
+        };
+      };
+      404: components['responses']['Error'];
+    };
+  };
+  retireVenue: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components['parameters']['VenueId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The retired venue. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Venue'];
+        };
+      };
+      404: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  updateVenue: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components['parameters']['VenueId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateVenueRequest'];
+      };
+    };
+    responses: {
+      /** @description The updated venue. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Venue'];
+        };
+      };
+      404: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
   getEvent: {
     parameters: {
       query?: never;
@@ -621,6 +1042,57 @@ export interface operations {
         };
       };
       404: components['responses']['Error'];
+    };
+  };
+  deleteEvent: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components['parameters']['EventId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The event was deleted. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  updateEvent: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components['parameters']['EventId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateEventRequest'];
+      };
+    };
+    responses: {
+      /** @description The updated event. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Event'];
+        };
+      };
+      404: components['responses']['Error'];
+      409: components['responses']['VenueConflict'];
+      429: components['responses']['RateLimited'];
     };
   };
   listEventAttendees: {

@@ -74,7 +74,11 @@ export function createIcal(rsvps: MyRsvp[], createdAt = new Date()): string {
       `DTEND:${toUtcDate(event.endAt)}`,
       `SUMMARY:${escapeText(title)}`,
       `DESCRIPTION:${escapeText(event.description)}`,
-      `LOCATION:${escapeText(event.club.name)}`,
+      `LOCATION:${escapeText(
+        event.venue
+          ? [event.venue.name, event.venue.building].filter(Boolean).join(', ')
+          : event.club.name,
+      )}`,
       'END:VEVENT',
     );
   }

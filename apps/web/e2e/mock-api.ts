@@ -4,7 +4,7 @@ import type { components } from '@/lib/api-schema';
 export const testEventId = 'b3a3345c-6450-4c36-9bb4-440e07b65bce';
 type CheckinManifest = components['schemas']['CheckinManifest'];
 
-export const testEvent = {
+export const testEvent: components['schemas']['Event'] = {
   id: testEventId,
   title: 'Campus Showcase',
   slug: 'campus-showcase',
@@ -14,7 +14,9 @@ export const testEvent = {
   endAt: new Date(Date.now() + 90_000_000).toISOString(),
   timeZone: 'UTC',
   capacity: 50,
+  expectedAttendance: 40,
   isPublic: true,
+  venue: null,
   clubId: '4ea0f280-2d60-4a56-a4cf-18b44349269f',
   categoryId: 'c138c747-06dc-4dcf-a24f-0533639e689c',
   rejectionReason: null,

@@ -18,6 +18,7 @@ const rsvp: MyRsvp = {
     endAt: '2026-04-02T20:00:00.000Z',
     timeZone: 'UTC',
     capacity: 50,
+    expectedAttendance: 50,
     isPublic: true,
     clubId: 'club-1',
     categoryId: 'category-1',
@@ -25,6 +26,7 @@ const rsvp: MyRsvp = {
     createdAt: '2026-03-01T09:00:00.000Z',
     updatedAt: '2026-03-01T09:00:00.000Z',
     hasImage: false,
+    venue: null,
     club: { name: 'Student, Union', slug: 'student-union' },
     category: { name: 'Social', slug: 'social' },
   },
@@ -84,5 +86,25 @@ describe('createIcal', () => {
     for (const line of physicalLines) {
       expect(new TextEncoder().encode(line).length).toBeLessThanOrEqual(75);
     }
+  });
+
+  it('uses the escaped venue name and building as the calendar location', () => {
+    const venueRsvp: MyRsvp = {
+      ...rsvp,
+      event: {
+        ...rsvp.event,
+        venue: {
+          id: 'venue-1',
+          name: 'Room 1,\r\nX-ATTACK: true;\\',
+          building: 'Student Union',
+        },
+      },
+    };
+
+    const calendar = createIcal([venueRsvp]);
+    const physicalLines = calendar.trimEnd().split('\r\n');
+
+    expect(calendar).toContain('LOCATION:Room 1\\,\\nX-ATTACK: true\\;\\\\\\, Student Union');
+    expect(physicalLines.filter((line) => line === 'X-ATTACK: true;\\')).toHaveLength(0);
   });
 });

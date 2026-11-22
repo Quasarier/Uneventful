@@ -61,6 +61,30 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
   /events:
+    post:
+      operationId: createEvent
+      summary: Create a draft event with an optional venue booking
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEventRequest'
+      responses:
+        '201':
+          description: The created event.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
     get:
       operationId: listEvents
       summary: List visible events
@@ -114,6 +138,158 @@ paths:
                 $ref: '#/components/schemas/EventPage'
         '401':
           $ref: '#/components/responses/Error'
+  /events/series:
+    post:
+      operationId: createEventSeries
+      summary: Atomically create a bounded recurring event series
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEventSeriesRequest'
+      responses:
+        '201':
+          description: The created series and its events.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventSeriesResult'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/VenueConflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /venues:
+    get:
+      operationId: listVenues
+      summary: List active venues
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Active venues with allowlisted availability details.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VenueList'
+    post:
+      operationId: createVenue
+      summary: Create a venue (administrators only)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateVenueRequest'
+      responses:
+        '201':
+          description: The created venue.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Venue'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /venues/conflicts:
+    post:
+      operationId: checkVenueConflicts
+      summary: Check venue availability and suggest alternatives
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VenueConflictRequest'
+      responses:
+        '200':
+          description: The requested venue is available.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VenueAvailabilityResult'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/VenueConflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /venues/{id}:
+    get:
+      operationId: getVenue
+      summary: Get an active venue
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/VenueId'
+      responses:
+        '200':
+          description: The venue.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Venue'
+        '404':
+          $ref: '#/components/responses/Error'
+    patch:
+      operationId: updateVenue
+      summary: Update a venue (administrators only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/VenueId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateVenueRequest'
+      responses:
+        '200':
+          description: The updated venue.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Venue'
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      operationId: retireVenue
+      summary: Retire a venue (administrators only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/VenueId'
+      responses:
+        '200':
+          description: The retired venue.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Venue'
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /events/{id}:
     get:
       operationId: getEvent
@@ -131,6 +307,46 @@ paths:
                 $ref: '#/components/schemas/Event'
         '404':
           $ref: '#/components/responses/Error'
+    patch:
+      operationId: updateEvent
+      summary: Update an event and synchronize its venue booking
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EventId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateEventRequest'
+      responses:
+        '200':
+          description: The updated event.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/VenueConflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      operationId: deleteEvent
+      summary: Soft-delete an event and release its venue booking
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EventId'
+      responses:
+        '200':
+          description: The event was deleted.
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /events/{id}/attendees:
     get:
       operationId: listEventAttendees
@@ -475,6 +691,13 @@ components:
       schema:
         type: string
         format: uuid
+    VenueId:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+        format: uuid
   responses:
     Error:
       description: Request failed.
@@ -492,6 +715,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ApiError'
+    VenueConflict:
+      description: The venue conflicts with the requested event time or requirements.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/VenueConflict'
   schemas:
     ApiError:
       type: object
@@ -555,6 +784,335 @@ components:
         slug:
           type: string
       required: [name, slug]
+    VenueAvailabilityHour:
+      type: object
+      additionalProperties: false
+      properties:
+        weekday:
+          type: integer
+          minimum: 1
+          maximum: 7
+        opensAt:
+          type: string
+          pattern: '^(?:[01]\d|2[0-3]):[0-5]\d$'
+        closesAt:
+          type: string
+          pattern: '^(?:[01]\d|2[0-3]):[0-5]\d$'
+      required: [weekday, opensAt, closesAt]
+    Venue:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        building:
+          type: [string, 'null']
+        capacity:
+          type: integer
+        bufferMinutes:
+          type: integer
+          minimum: 0
+          maximum: 1440
+        isActive:
+          type: boolean
+        availabilityHours:
+          type: array
+          maxItems: 7
+          items:
+            $ref: '#/components/schemas/VenueAvailabilityHour'
+      required: [id, name, building, capacity, bufferMinutes, isActive, availabilityHours]
+    VenueList:
+      type: object
+      additionalProperties: false
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Venue'
+      required: [data]
+    CreateVenueRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 160
+        building:
+          type: [string, 'null']
+          maxLength: 160
+        capacity:
+          type: integer
+          minimum: 1
+          maximum: 100000
+        bufferMinutes:
+          type: integer
+          minimum: 0
+          maximum: 1440
+        availabilityHours:
+          type: array
+          maxItems: 7
+          items:
+            $ref: '#/components/schemas/VenueAvailabilityHour'
+      required: [name, capacity, bufferMinutes, availabilityHours]
+    UpdateVenueRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 160
+        building:
+          type: [string, 'null']
+          maxLength: 160
+        capacity:
+          type: integer
+          minimum: 1
+          maximum: 100000
+        bufferMinutes:
+          type: integer
+          minimum: 0
+          maximum: 1440
+        isActive:
+          type: boolean
+        availabilityHours:
+          type: array
+          maxItems: 7
+          items:
+            $ref: '#/components/schemas/VenueAvailabilityHour'
+    RecurrenceRule:
+      type: object
+      additionalProperties: false
+      properties:
+        frequency:
+          type: string
+          enum: [DAILY, WEEKLY, MONTHLY]
+        interval:
+          type: integer
+          minimum: 1
+          maximum: 12
+        count:
+          type: integer
+          minimum: 1
+          maximum: 52
+        untilDate:
+          type: string
+          format: date
+      required: [frequency, interval]
+    CreateEventRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          minLength: 1
+          maxLength: 20000
+        startAt:
+          type: string
+          format: date-time
+        endAt:
+          type: string
+          format: date-time
+        timeZone:
+          type: string
+          maxLength: 64
+        capacity:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 100000
+        expectedAttendance:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 100000
+        isPublic:
+          type: boolean
+        clubId:
+          type: string
+          format: uuid
+        categoryId:
+          type: string
+          format: uuid
+        venueId:
+          type: [string, 'null']
+          format: uuid
+      required: [title, description, startAt, endAt, timeZone, isPublic, clubId, categoryId]
+    UpdateEventRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          minLength: 1
+          maxLength: 20000
+        startAt:
+          type: string
+          format: date-time
+        endAt:
+          type: string
+          format: date-time
+        timeZone:
+          type: string
+          maxLength: 64
+        capacity:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 100000
+        expectedAttendance:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 100000
+        isPublic:
+          type: boolean
+        categoryId:
+          type: string
+          format: uuid
+        venueId:
+          type: [string, 'null']
+          format: uuid
+    CreateEventSeriesRequest:
+      allOf:
+        - $ref: '#/components/schemas/CreateEventRequest'
+        - type: object
+          additionalProperties: false
+          properties:
+            recurrence:
+              $ref: '#/components/schemas/RecurrenceRule'
+            exceptionDates:
+              type: array
+              maxItems: 52
+              uniqueItems: true
+              items:
+                type: string
+                format: date
+          required: [recurrence, exceptionDates]
+    EventSeriesResult:
+      type: object
+      additionalProperties: false
+      properties:
+        seriesId:
+          type: string
+          format: uuid
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/Event'
+      required: [seriesId, events]
+    VenueSlot:
+      type: object
+      additionalProperties: false
+      properties:
+        startAt:
+          type: string
+          format: date-time
+        endAt:
+          type: string
+          format: date-time
+      required: [startAt, endAt]
+    VenueAlternative:
+      allOf:
+        - $ref: '#/components/schemas/VenueSlot'
+        - type: object
+          additionalProperties: false
+          properties:
+            venueId:
+              type: string
+              format: uuid
+            name:
+              type: string
+            building:
+              type: [string, 'null']
+          required: [venueId, name, building]
+    VenueConflict:
+      type: object
+      additionalProperties: false
+      properties:
+        statusCode:
+          type: integer
+          const: 409
+        code:
+          type: string
+          const: CONFLICT
+        message:
+          type: string
+        path:
+          type: string
+        reasons:
+          type: array
+          items:
+            type: string
+            enum: [BOOKING_CONFLICT, CAPACITY, OUTSIDE_HOURS, PAST_START]
+        conflicts:
+          type: array
+          items:
+            $ref: '#/components/schemas/VenueSlot'
+        alternatives:
+          type: array
+          maxItems: 3
+          items:
+            $ref: '#/components/schemas/VenueAlternative'
+      required: [statusCode, code, message, path, reasons, conflicts, alternatives]
+    VenueConflictRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        venueId:
+          type: string
+          format: uuid
+        startAt:
+          type: string
+          format: date-time
+        endAt:
+          type: string
+          format: date-time
+        expectedAttendance:
+          type: integer
+          minimum: 1
+          maximum: 100000
+        eventId:
+          type: string
+          format: uuid
+        recurrence:
+          $ref: '#/components/schemas/RecurrenceRule'
+        exceptionDates:
+          type: array
+          maxItems: 52
+          uniqueItems: true
+          items:
+            type: string
+            format: date
+      required: [venueId, startAt, endAt, expectedAttendance]
+    VenueAvailabilityResult:
+      type: object
+      additionalProperties: false
+      properties:
+        available:
+          type: boolean
+          const: true
+        conflicts:
+          type: array
+          maxItems: 0
+          items:
+            $ref: '#/components/schemas/VenueSlot'
+        alternatives:
+          type: array
+          maxItems: 0
+          items:
+            $ref: '#/components/schemas/VenueAlternative'
+      required: [available, conflicts, alternatives]
     Event:
       type: object
       properties:
@@ -580,8 +1138,14 @@ components:
           type: string
         capacity:
           type: [integer, 'null']
+        expectedAttendance:
+          type: [integer, 'null']
         isPublic:
           type: boolean
+        venue:
+          oneOf:
+            - $ref: '#/components/schemas/EventVenue'
+            - type: 'null'
         clubId:
           type: string
           format: uuid
@@ -612,7 +1176,9 @@ components:
         - endAt
         - timeZone
         - capacity
+        - expectedAttendance
         - isPublic
+        - venue
         - clubId
         - categoryId
         - rejectionReason
@@ -621,6 +1187,18 @@ components:
         - hasImage
         - club
         - category
+    EventVenue:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        building:
+          type: [string, 'null']
+      required: [id, name, building]
     EventPage:
       type: object
       properties:

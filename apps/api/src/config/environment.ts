@@ -16,6 +16,15 @@ function isValidDomain(domain: string): boolean {
   );
 }
 
+function isValidTimeZone(timeZone: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const environmentSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']),
@@ -101,6 +110,9 @@ const environmentSchema = z
         message: 'Must be a valid DNS domain',
       })
       .transform((domain) => domain.toLowerCase()),
+    CAMPUS_TIME_ZONE: z.string().min(1).max(64).refine(isValidTimeZone, {
+      message: 'Must be a valid IANA time zone',
+    }),
     WEB_ORIGIN: z
       .string()
       .url()

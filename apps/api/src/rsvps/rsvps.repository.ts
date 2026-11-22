@@ -27,6 +27,7 @@ type LockedUser = { id: string; role: string; is_active: boolean; deleted_at: Da
 const myRsvpEventInclude = {
   club: { select: { name: true, slug: true } },
   category: { select: { name: true, slug: true } },
+  venue: { select: { id: true, name: true, building: true } },
 } satisfies Prisma.EventInclude;
 
 const visibleRsvpEventSelect = {

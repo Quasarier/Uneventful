@@ -45,6 +45,12 @@ export class UpdateEventDto {
   @Max(100_000)
   capacity?: number | null;
 
+  @ValidateIf((_object, value) => value !== undefined && value !== null)
+  @IsInt()
+  @Min(1)
+  @Max(100_000)
+  expectedAttendance?: number | null;
+
   @ValidateIf((_object, value) => value !== undefined)
   @IsBoolean()
   isPublic?: boolean;
@@ -52,4 +58,8 @@ export class UpdateEventDto {
   @ValidateIf((_object, value) => value !== undefined)
   @IsUUID()
   categoryId?: string;
+
+  @ValidateIf((_object, value) => value !== undefined && value !== null)
+  @IsUUID()
+  venueId?: string | null;
 }

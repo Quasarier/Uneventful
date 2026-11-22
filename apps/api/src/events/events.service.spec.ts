@@ -11,6 +11,7 @@ import type { EventRecord, EventsRepository } from './events.repository';
 import type { EventImageStorageService } from './event-image-storage.service';
 import { ListEventsDto } from './dto/list-events.dto';
 import { EventsService } from './events.service';
+import type { VenueBookingsService } from '../venues/venue-bookings.service';
 
 const userId = '93b1a3e8-0dfd-4c8c-a0a5-1f1790730011';
 const otherUserId = '9bdcf6c8-6ab5-4c7f-9f7d-4560192ed7b8';
@@ -78,6 +79,9 @@ describe('EventsService authorization and workflow', () => {
     sanitizeAndStoreUploadedObject: ReturnType<typeof vi.fn>;
     getFinalImage: ReturnType<typeof vi.fn>;
   };
+  let venueBookings: {
+    getOccurrences: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     repository = {
@@ -104,9 +108,11 @@ describe('EventsService authorization and workflow', () => {
         extension: 'png',
       }),
     };
+    venueBookings = { getOccurrences: vi.fn() };
     service = new EventsService(
       repository as unknown as EventsRepository,
       storage as unknown as EventImageStorageService,
+      venueBookings as unknown as VenueBookingsService,
     );
   });
 
@@ -330,7 +336,9 @@ describe('EventsService authorization and workflow', () => {
         'endAt',
         'timeZone',
         'capacity',
+        'expectedAttendance',
         'isPublic',
+        'venue',
         'clubId',
         'categoryId',
         'rejectionReason',
@@ -382,6 +390,7 @@ describe('EventsService authorization and workflow', () => {
       EventStatus.APPROVED,
       expect.objectContaining({ status: EventStatus.PENDING_APPROVAL, approvedById: null }),
       userId,
+      startAt,
       {
         action: 'EVENT_UPDATED_REQUIRES_APPROVAL',
         metadata: { fromStatus: EventStatus.APPROVED, toStatus: EventStatus.PENDING_APPROVAL },
@@ -415,6 +424,7 @@ describe('EventsService authorization and workflow', () => {
       EventStatus.DRAFT,
       expect.objectContaining({ status: EventStatus.PENDING_APPROVAL }),
       userId,
+      startAt,
       expect.objectContaining({ action: 'EVENT_SUBMITTED' }),
     );
 
@@ -426,6 +436,7 @@ describe('EventsService authorization and workflow', () => {
       EventStatus.PENDING_APPROVAL,
       expect.objectContaining({ status: EventStatus.APPROVED, approvedById: otherUserId }),
       otherUserId,
+      startAt,
       expect.objectContaining({ action: 'EVENT_APPROVED' }),
     );
 
@@ -436,6 +447,7 @@ describe('EventsService authorization and workflow', () => {
       EventStatus.PENDING_APPROVAL,
       expect.objectContaining({ status: EventStatus.REJECTED, rejectionReason: 'Missing details' }),
       userId,
+      startAt,
       expect.objectContaining({
         action: 'EVENT_REJECTED',
         metadata: expect.objectContaining({ reason: 'Missing details' }),
@@ -450,6 +462,7 @@ describe('EventsService authorization and workflow', () => {
       EventStatus.APPROVED,
       expect.objectContaining({ status: EventStatus.CANCELLED }),
       userId,
+      startAt,
       expect.objectContaining({ action: 'EVENT_CANCELLED' }),
     );
   });

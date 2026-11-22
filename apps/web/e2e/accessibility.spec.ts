@@ -27,6 +27,18 @@ test('event detail has no WCAG A/AA accessibility violations', async ({ page }) 
   expect(results.violations).toEqual([]);
 });
 
+test('event detail displays venue name and building', async ({ page }) => {
+  await mockStudentApi(page, {
+    event: {
+      ...testEvent,
+      venue: { id: '32bb590f-f720-4f4a-9b14-2a50764234c5', name: 'Main Hall', building: 'Library' },
+    },
+  });
+  await page.goto(`/events/${testEvent.id}`);
+
+  await expect(page.getByText('Location: Main Hall · Library')).toBeVisible();
+});
+
 test('tickets page has no WCAG A/AA accessibility violations', async ({ page }) => {
   await mockStudentApi(page);
   await page.goto('/tickets');
