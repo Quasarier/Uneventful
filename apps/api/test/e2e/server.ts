@@ -15,6 +15,7 @@ import { installDecoratorMetadataForTsx } from './install-decorator-metadata';
 
 function setEphemeralTestCredentials(): void {
   const keyPair = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const ticketKeyPair = generateKeyPairSync('ed25519');
   process.env.JWT_PRIVATE_KEY_B64 = Buffer.from(
     keyPair.privateKey.export({ type: 'pkcs8', format: 'pem' }),
   ).toString('base64');
@@ -22,6 +23,13 @@ function setEphemeralTestCredentials(): void {
     keyPair.publicKey.export({ type: 'spki', format: 'pem' }),
   ).toString('base64');
   process.env.JWT_KEY_ID = `e2e-${randomBytes(12).toString('hex')}`;
+  process.env.TICKET_SIGNING_PRIVATE_KEY_B64 = Buffer.from(
+    ticketKeyPair.privateKey.export({ type: 'pkcs8', format: 'der' }),
+  ).toString('base64');
+  process.env.TICKET_SIGNING_PUBLIC_KEY_B64 = Buffer.from(
+    ticketKeyPair.publicKey.export({ type: 'spki', format: 'der' }),
+  ).toString('base64');
+  process.env.TICKET_SIGNING_KEY_ID = `e2e-ticket-${randomBytes(12).toString('hex')}`;
   process.env.JWT_ISSUER = 'https://api.uneventful.test';
   process.env.JWT_AUDIENCE = 'uneventful-api';
   process.env.SESSION_SECRET = randomBytes(32).toString('base64url');

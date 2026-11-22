@@ -45,7 +45,7 @@ export function MyTickets() {
       });
       setTickets((current) => ({ ...current, [rsvpId]: { token: data.token, image } }));
       setStatus(
-        'Ticket QR code is ready. Any previously issued code for this event has been replaced.',
+        'Signed ticket QR code is ready. Keep it private; it expires two hours after the event ends.',
       );
     } catch (reason) {
       setTicketError(reason instanceof Error ? reason.message : 'Ticket could not be issued.');
@@ -63,10 +63,6 @@ export function MyTickets() {
         </h1>
         <p className="mt-4 text-base leading-7 text-ink/70">
           Open a ticket QR code when you’re ready to check in. Codes stay in this page session only.
-        </p>
-        <p className="mt-2 text-sm leading-6 text-ink/70">
-          QR codes currently encode a random one-time API bearer token, not an event or RSVP ID.
-          This temporary format will be replaced by signed tokens in Stage 7.
         </p>
       </div>
       {loading && (
@@ -112,12 +108,12 @@ export function MyTickets() {
                   </time>
                 </p>
                 <p className="mt-3 inline-flex rounded-full bg-mint/60 px-3 py-1 text-xs font-bold text-forest">
-                  {rsvp.ticket?.status === 'REDEEMED' ? 'Checked in' : 'RSVP confirmed'}
+                  {rsvp.ticket?.status === 'USED' ? 'Checked in' : 'RSVP confirmed'}
                 </p>
                 <div className="mt-5">
                   <button
                     className="rounded-full bg-forest px-5 py-2.5 text-sm font-bold text-white hover:bg-forest/90 disabled:cursor-not-allowed disabled:opacity-60"
-                    disabled={loadingId === rsvp.id || rsvp.ticket?.status === 'REDEEMED'}
+                    disabled={loadingId === rsvp.id || rsvp.ticket?.status === 'USED'}
                     onClick={() => void showTicket(rsvp.event.id, rsvp.id)}
                     type="button"
                   >

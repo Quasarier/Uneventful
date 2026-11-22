@@ -21,6 +21,11 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     { AuthRateLimitService },
     { AuthRepository },
     { AuthService },
+    { CheckinManifestQueryDto },
+    { CheckinTicketDto },
+    { CheckinsController },
+    { CheckinsRepository },
+    { CheckinsService },
     { CreateEventDto },
     { CreateImageUploadDto },
     { CreateRsvpDto },
@@ -36,6 +41,8 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     { JwtAuthGuard },
     { ListEventAttendeesDto },
     { ListEventsDto },
+    { ManualCheckinDto },
+    { ManualCheckinLookupDto },
     { MyRsvpsController },
     { PrismaService },
     { RejectEventDto },
@@ -45,6 +52,8 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     { RsvpsController },
     { RsvpsRepository },
     { RsvpsService },
+    { SyncCheckinsDto },
+    { TicketSigningService },
     { UpdateEventDto },
   ] = await Promise.all([
     import('../../src/app.controller'),
@@ -53,6 +62,11 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     import('../../src/auth/auth-rate-limit.service'),
     import('../../src/auth/auth.repository'),
     import('../../src/auth/auth.service'),
+    import('../../src/rsvps/dto/checkin-manifest-query.dto'),
+    import('../../src/rsvps/dto/checkin-ticket.dto'),
+    import('../../src/rsvps/checkins.controller'),
+    import('../../src/rsvps/checkins.repository'),
+    import('../../src/rsvps/checkins.service'),
     import('../../src/events/dto/create-event.dto'),
     import('../../src/events/dto/create-image-upload.dto'),
     import('../../src/rsvps/dto/create-rsvp.dto'),
@@ -68,6 +82,8 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     import('../../src/auth/jwt-auth.guard'),
     import('../../src/rsvps/dto/list-event-attendees.dto'),
     import('../../src/events/dto/list-events.dto'),
+    import('../../src/rsvps/dto/manual-checkin.dto'),
+    import('../../src/rsvps/dto/manual-checkin-lookup.dto'),
     import('../../src/rsvps/my-rsvps.controller'),
     import('../../src/database/prisma.service'),
     import('../../src/events/dto/reject-event.dto'),
@@ -77,6 +93,8 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     import('../../src/rsvps/rsvps.controller'),
     import('../../src/rsvps/rsvps.repository'),
     import('../../src/rsvps/rsvps.service'),
+    import('../../src/rsvps/dto/sync-checkins.dto'),
+    import('../../src/rsvps/ticket-signing.service'),
     import('../../src/events/dto/update-event.dto'),
   ]);
 
@@ -90,6 +108,13 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
   defineConstructorTypes(AuthRateLimitService, [Object]);
   defineConstructorTypes(AuthRepository, [PrismaService]);
   defineConstructorTypes(AuthService, [ConfigService, AuthRepository]);
+  defineConstructorTypes(CheckinsController, [
+    CheckinsService,
+    AuthRateLimitService,
+    ConfigService,
+  ]);
+  defineConstructorTypes(CheckinsRepository, [PrismaService, TicketSigningService]);
+  defineConstructorTypes(CheckinsService, [CheckinsRepository]);
   defineConstructorTypes(E2eTestSupportController, [PrismaService, AuthService]);
   defineConstructorTypes(EventImageStorageService, [ConfigService]);
   defineConstructorTypes(EventsController, [EventsService, AuthRateLimitService]);
@@ -110,12 +135,18 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
   defineConstructorTypes(RsvpPromotionOutboxDispatcher, [PrismaService, Object]);
   defineConstructorTypes(RsvpPromotionProcessor, [RsvpsRepository]);
   defineConstructorTypes(RsvpsController, [RsvpsService, AuthRateLimitService, ConfigService]);
-  defineConstructorTypes(RsvpsRepository, [PrismaService]);
+  defineConstructorTypes(RsvpsRepository, [PrismaService, TicketSigningService]);
   defineConstructorTypes(RsvpsService, [RsvpsRepository]);
+  defineConstructorTypes(TicketSigningService, [ConfigService]);
 
   defineMethodTypes(AppController, 'getLiveness', []);
   defineMethodTypes(AppController, 'getReadiness', []);
   defineMethodTypes(AuthController, 'getCurrentUser', [Object]);
+  defineMethodTypes(CheckinsController, 'getManifest', [Object, String, CheckinManifestQueryDto]);
+  defineMethodTypes(CheckinsController, 'checkIn', [Object, String, CheckinTicketDto]);
+  defineMethodTypes(CheckinsController, 'syncCheckins', [Object, String, SyncCheckinsDto]);
+  defineMethodTypes(CheckinsController, 'lookup', [Object, String, ManualCheckinLookupDto]);
+  defineMethodTypes(CheckinsController, 'manualCheckIn', [Object, String, ManualCheckinDto]);
   defineMethodTypes(EventsController, 'list', [Object, ListEventsDto]);
   defineMethodTypes(EventsController, 'get', [Object, String]);
   defineMethodTypes(EventsController, 'create', [Object, CreateEventDto]);

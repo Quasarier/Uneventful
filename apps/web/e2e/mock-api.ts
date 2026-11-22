@@ -1,6 +1,8 @@
 import type { Page } from '@playwright/test';
+import type { components } from '@/lib/api-schema';
 
 export const testEventId = 'b3a3345c-6450-4c36-9bb4-440e07b65bce';
+type CheckinManifest = components['schemas']['CheckinManifest'];
 
 export const testEvent = {
   id: testEventId,
@@ -45,6 +47,7 @@ export async function mockStudentApi(
     event?: typeof testEvent;
     profile?: typeof profile;
     rsvps?: unknown[];
+    checkinManifest?: CheckinManifest;
   } = {},
 ): Promise<void> {
   const event = options.event ?? testEvent;
@@ -100,6 +103,15 @@ export async function mockStudentApi(
         contentType: 'application/json',
         headers: corsHeaders,
         body: JSON.stringify({ data: options.rsvps ?? [] }),
+      });
+      return;
+    }
+    if (url.pathname.endsWith('/checkin-manifest') && options.checkinManifest) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: corsHeaders,
+        body: JSON.stringify(options.checkinManifest),
       });
       return;
     }

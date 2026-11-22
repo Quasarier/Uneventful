@@ -286,6 +286,13 @@ export class E2eTestSupportController implements OnModuleDestroy {
         select: { id: true },
       });
       const rsvpIds = rsvps.map(({ id }) => id);
+      const tickets = await transaction.ticket.findMany({
+        where: { rsvpId: { in: rsvpIds } },
+        select: { id: true },
+      });
+      await transaction.checkIn.deleteMany({
+        where: { ticketId: { in: tickets.map(({ id }) => id) } },
+      });
       await transaction.ticket.deleteMany({ where: { rsvpId: { in: rsvpIds } } });
       await transaction.rsvp.deleteMany({ where: { id: { in: rsvpIds } } });
       await transaction.rsvpPromotionOutbox.deleteMany({ where: { eventId: fixture.eventId } });
