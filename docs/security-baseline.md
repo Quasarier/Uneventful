@@ -81,3 +81,29 @@ Review by **2026-12-21**. Remove this exception only after replacing the popup
 completion channel with an opener-independent design and verifying the full
 OAuth E2E journey. The ZAP CI job remains non-blocking until this baseline
 exception is resolved or explicitly accepted.
+
+## Real-time event dashboard
+
+The `/realtime` Socket.IO namespace uses websocket-only transport and the Redis
+adapter. The browser sends the in-memory access token in the Socket.IO
+handshake `auth` payload, never in the query string. The API requires strict
+equality between the handshake Origin and configured `WEB_ORIGIN`; credentialed
+CORS uses that exact origin and never a wildcard. The web CSP `connect-src`
+allows self plus only the configured API HTTP and corresponding WS(S) origins.
+
+The gateway validates a live JWT session family on connect, reserves a
+Redis-backed lease (at most three sockets per user), and disconnects on token
+expiry or logout/revocation. It checks active club membership on each room join
+and rechecks connected sessions and memberships every three seconds, removing
+organizers from event rooms after membership loss. Inbound payloads are
+allowlisted, limited to 4 KiB and 20 messages per connection per ten seconds,
+and each socket can join at most ten event rooms.
+
+Dashboard messages contain only the event ID, aggregate attendance counts and
+ratio, capacity, and the ten most recent check-ins' display names and times.
+Email addresses, user IDs, RSVP IDs, ticket hashes, and signed ticket tokens
+are excluded. Check-in broadcasts are issued only after a successful database
+transaction commits; duplicates do not create additional check-ins or
+broadcasts. The Redis adapter distributes committed updates across API
+instances. The page uses ephemeral React state and disconnects/clears it on
+logout; it does not persist dashboard data or credentials in browser storage.

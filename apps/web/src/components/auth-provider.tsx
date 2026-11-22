@@ -27,6 +27,7 @@ interface AuthContextValue {
   acceptSession: (session: ApiSession) => void;
   clearSession: () => void;
   ensureSession: () => Promise<boolean>;
+  getValidAccessToken: () => Promise<string | null>;
   logout: () => Promise<void>;
   setUserRole: (role: UserRole | null) => void;
 }
@@ -126,6 +127,11 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
     return refresh;
   }, [acceptSession, clearSession]);
 
+  const getValidAccessToken = useCallback(async (): Promise<string | null> => {
+    const isAuthenticated = await ensureSession();
+    return isAuthenticated ? accessTokenRef.current : null;
+  }, [ensureSession]);
+
   const logout = useCallback(async () => {
     const response = await fetch(`${API_BASE_URL}/auth/logout`, {
       method: 'POST',
@@ -188,10 +194,20 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
       acceptSession,
       clearSession,
       ensureSession,
+      getValidAccessToken,
       logout,
       setUserRole,
     }),
-    [accessToken, userRole, acceptSession, clearSession, ensureSession, logout, setUserRole],
+    [
+      accessToken,
+      userRole,
+      acceptSession,
+      clearSession,
+      ensureSession,
+      getValidAccessToken,
+      logout,
+      setUserRole,
+    ],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

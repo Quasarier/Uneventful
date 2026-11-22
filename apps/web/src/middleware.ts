@@ -5,6 +5,8 @@ function createContentSecurityPolicy(
   apiOrigin: string,
   production: boolean,
 ): string {
+  const socketOrigin = new URL(apiOrigin);
+  socketOrigin.protocol = socketOrigin.protocol === 'https:' ? 'wss:' : 'ws:';
   const directives = [
     "default-src 'self'",
     "base-uri 'self'",
@@ -14,7 +16,7 @@ function createContentSecurityPolicy(
     "style-src 'self'",
     "img-src 'self' data: blob:",
     "font-src 'self'",
-    `connect-src 'self' ${apiOrigin}`,
+    `connect-src 'self' ${apiOrigin} ${socketOrigin.origin}`,
     "frame-src 'none'",
     "frame-ancestors 'none'",
     "form-action 'self'",

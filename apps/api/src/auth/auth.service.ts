@@ -41,6 +41,12 @@ export interface AuthSession {
   expiresIn: typeof ACCESS_TOKEN_TTL_SECONDS;
 }
 
+export interface AuthenticatedAccessSession {
+  principal: AuthPrincipal;
+  familyId: string;
+  expiresAt: number;
+}
+
 @Injectable()
 export class AuthService implements OnModuleInit {
   private signingKey!: Awaited<ReturnType<typeof importPKCS8>>;
@@ -154,19 +160,40 @@ export class AuthService implements OnModuleInit {
     return this.createSessionTokens(record.user, nextRefreshToken, record.familyId);
   }
 
-  async logout(rawRefreshToken: string | undefined): Promise<void> {
+  async logout(rawRefreshToken: string | undefined): Promise<string | undefined> {
     if (!rawRefreshToken || !/^[A-Za-z0-9_-]{43}$/.test(rawRefreshToken)) {
-      return;
+      return undefined;
     }
 
     const record = await this.repository.findRefreshByHash(this.hashRefreshToken(rawRefreshToken));
     if (record) {
       await this.repository.revokeFamily(record.familyId, new Date());
+      return record.familyId;
     }
+    return undefined;
   }
 
   async logoutAll(userId: string): Promise<void> {
     await this.repository.revokeUserSessions(userId, new Date());
+  }
+
+  async isAccessSessionActive(session: AuthenticatedAccessSession): Promise<boolean> {
+    const user = await this.repository.findUserState(session.principal.id);
+    if (
+      !user ||
+      !user.isActive ||
+      user.deletedAt ||
+      user.role !== session.principal.role ||
+      user.tokenVersion !== session.principal.tokenVersion
+    ) {
+      return false;
+    }
+    return this.repository.hasActiveRefreshTokenFamily(
+      user.id,
+      session.familyId,
+      session.principal.tokenVersion,
+      new Date(),
+    );
   }
 
   async getProfile(userId: string) {
@@ -186,6 +213,11 @@ export class AuthService implements OnModuleInit {
   }
 
   async authenticateAccessToken(token: string): Promise<AuthPrincipal> {
+    const session = await this.authenticateAccessTokenSession(token);
+    return session.principal;
+  }
+
+  async authenticateAccessTokenSession(token: string): Promise<AuthenticatedAccessSession> {
     try {
       const keyId = decodeProtectedHeader(token).kid;
       if (!keyId) {
@@ -228,9 +260,13 @@ export class AuthService implements OnModuleInit {
       }
 
       return {
-        id: user.id,
-        role: user.role,
-        tokenVersion: user.tokenVersion,
+        principal: {
+          id: user.id,
+          role: user.role,
+          tokenVersion: user.tokenVersion,
+        },
+        familyId: claims.sid,
+        expiresAt: claims.exp * 1_000,
       };
     } catch (error) {
       if (error instanceof UnauthorizedException) {

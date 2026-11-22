@@ -108,7 +108,17 @@ The dedicated `/events/:id/scanner` page uses the browser's native `BarcodeDetec
 
 ## Uneventful web frontend
 
-The Next.js app provides a Google sign-in landing page and authenticated pages for event discovery, event details and RSVP, club discovery, tickets, calendar/iCal export, profile, and the dedicated organizer check-in scanner. Routes that need authentication refresh the HttpOnly-cookie session on demand; the access token stays in React memory and is never placed in browser storage. The typed client uses `openapi-fetch` with generated types from `apps/api/openapi.yaml`; regenerate them after contract changes with `corepack pnpm --filter @uneventful/web api:types`.
+The Next.js app provides a Google sign-in landing page and authenticated pages for event discovery, event details and RSVP, club discovery, tickets, calendar/iCal export, profile, the dedicated organizer check-in scanner, and an event-day live dashboard. Routes that need authentication refresh the HttpOnly-cookie session on demand; the access token stays in React memory and is never placed in browser storage. The typed client uses `openapi-fetch` with generated types from `apps/api/openapi.yaml`; regenerate them after contract changes with `corepack pnpm --filter @uneventful/web api:types`.
+
+The event-day dashboard uses the API's websocket-only Socket.IO `/realtime`
+namespace. It authenticates with the in-memory access token in the handshake
+`auth` payload (never in a URL), and allows only admins or organizers with
+active membership in the event club. The Redis adapter distributes committed
+check-in updates across API instances. Dashboard payloads contain attendance
+counts, capacity, and recent attendee display names and times only; logout
+disconnects the socket and clears the in-memory view. See the [real-time
+dashboard contract](./docs/realtime-dashboard.md) for message and security
+details.
 
 The club directory is derived from public event data, so it lists clubs with discoverable public events rather than clubs with no public events. The ticket page issues a signed ticket only when requested, keeps the raw token in component memory, and displays its QR code without persisting it. The scanner route alone enables camera permission; other routes use `camera=()`. The service worker precaches only `/offline.html` and `/icons/icon.svg`, serves the icon cache-first, and uses network-first navigation with the offline page as fallback. It does not cache API requests, requests carrying `Authorization`, responses carrying `Set-Cookie` or `Cache-Control: no-store`, or page navigations; it removes older static caches on activation and clears app caches on logout. The API's `GET /api/v1/events/:id/rsvp/status` and `GET /api/v1/rsvps/me` responses are private/no-store; the latter returns only the current student's active RSVP and safe ticket metadata.
 

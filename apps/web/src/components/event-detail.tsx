@@ -171,6 +171,14 @@ export function EventDetail({ eventId }: Readonly<{ eventId: string }>) {
           Open check-in scanner
         </Link>
       )}
+      {(userRole === 'ORGANIZER' || userRole === 'ADMIN') && (
+        <Link
+          className="ml-5 text-sm font-bold text-forest underline underline-offset-4"
+          href={`/events/${eventId}/dashboard`}
+        >
+          Open live dashboard
+        </Link>
+      )}
       <header className="mt-6 rounded-[2rem] bg-forest p-7 text-white sm:p-10">
         <p className="text-sm font-bold text-mint">
           {event.category.name} · {event.club.name}

@@ -33,6 +33,8 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     { E2eSessionDto },
     { E2eTestSupportController },
     { EventImageStorageService },
+    { EventDashboardGateway },
+    { EventDashboardRepository },
     { EventsController },
     { EventsRepository },
     { EventsService },
@@ -82,6 +84,8 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     import('./test-support.dto'),
     import('./test-support.controller'),
     import('../../src/events/event-image-storage.service'),
+    import('../../src/realtime/event-dashboard.gateway'),
+    import('../../src/realtime/event-dashboard.repository'),
     import('../../src/events/events.controller'),
     import('../../src/events/events.repository'),
     import('../../src/events/events.service'),
@@ -129,10 +133,17 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     AuthRateLimitService,
     ConfigService,
   ]);
-  defineConstructorTypes(CheckinsRepository, [PrismaService, TicketSigningService]);
+  defineConstructorTypes(CheckinsRepository, [PrismaService, TicketSigningService, Object]);
   defineConstructorTypes(CheckinsService, [CheckinsRepository]);
   defineConstructorTypes(E2eTestSupportController, [PrismaService, AuthService]);
   defineConstructorTypes(EventImageStorageService, [ConfigService]);
+  defineConstructorTypes(EventDashboardGateway, [
+    AuthService,
+    AuthRateLimitService,
+    ConfigService,
+    EventDashboardRepository,
+  ]);
+  defineConstructorTypes(EventDashboardRepository, [PrismaService]);
   defineConstructorTypes(EventsController, [EventsService, AuthRateLimitService]);
   defineConstructorTypes(EventsRepository, [PrismaService, VenueBookingsService]);
   defineConstructorTypes(EventsService, [

@@ -132,7 +132,10 @@ export class AuthController {
   ): Promise<void> {
     this.assertCookieRequest(request);
     this.clearRefreshCookie(response);
-    await this.authService.logout(this.getCookie(request, REFRESH_COOKIE));
+    const familyId = await this.authService.logout(this.getCookie(request, REFRESH_COOKIE));
+    if (familyId) {
+      await this.rateLimit.publishSessionRevocation({ familyId });
+    }
   }
 
   @Get('me')
@@ -157,6 +160,7 @@ export class AuthController {
     }
 
     await this.authService.logoutAll(userId);
+    await this.rateLimit.publishSessionRevocation({ userId });
     this.clearRefreshCookie(response);
   }
 

@@ -8,9 +8,9 @@ Treat them as requirements, not suggestions.
 - pnpm monorepo; packages use the `@uneventful/*` namespace.
 - `apps/web`: strict TypeScript, Next.js App Router, Tailwind CSS, and PWA.
 - `apps/api`: strict TypeScript and NestJS.
-- PostgreSQL 17 with Prisma 7.10.1; Redis with BullMQ.
+- PostgreSQL 17 with Prisma 7.10.1; Redis with BullMQ and Socket.IO.
 - Docker and GitHub Actions for local services and CI.
-- Socket.IO is planned for a later stage.
+- Socket.IO provides the authenticated real-time event dashboard.
 - Authentication uses Google OAuth/OIDC, restricted to the university email
   domain. Roles are `STUDENT`, `ORGANIZER`, and `ADMIN`.
 
@@ -49,7 +49,7 @@ Treat them as requirements, not suggestions.
 
 - Run database and Redis integration tests with
   `bash scripts/test-integration-local.sh` from Git Bash on Windows.
-- CI enforces minimums of 75 API integration tests and 26 Playwright tests.
+- CI enforces minimums of 84 API integration tests and 28 Playwright tests.
   Raise the corresponding minimum whenever tests are added.
 - Never weaken or delete assertions, skip tests, or lower a minimum to make a
   check pass. Change an expectation only when the requirement changes, and

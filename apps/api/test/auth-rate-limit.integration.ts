@@ -22,6 +22,7 @@ import { HttpExceptionFilter } from '../src/http-exception.filter';
 
 const redisUrl = process.env.TEST_REDIS_URL;
 const anonymousRateLimit = 301;
+const anonymousRateLimitTestIp = '198.51.100.44';
 const authenticatedUserId = randomUUID();
 const authenticatedPrincipal: AuthPrincipal = {
   id: authenticatedUserId,
@@ -74,6 +75,7 @@ describe('authentication Redis rate limit integration', () => {
       authenticateAccessToken: async () => authenticatedPrincipal,
     } as unknown as AuthService;
     httpApp = await NestFactory.create(GlobalRateLimitHttpTestModule, { logger: false });
+    httpApp.getHttpAdapter().getInstance().set('trust proxy', 'loopback');
     httpApp.setGlobalPrefix('api/v1');
     httpApp.useGlobalFilters(new HttpExceptionFilter());
     httpApp.useGlobalGuards(
@@ -150,16 +152,20 @@ describe('authentication Redis rate limit integration', () => {
   });
 
   it('returns 429 with Retry-After when the anonymous IP limit is exceeded over HTTP', async () => {
-    const clientIp = '127.0.0.1';
+    const clientIp = anonymousRateLimitTestIp;
     const digest = createHash('sha256').update(clientIp).digest('hex');
     await redis.del(`uneventful:auth-rate:v1:api-anonymous-ip:${digest}`);
 
     for (let attempt = 0; attempt < anonymousRateLimit; attempt += 1) {
-      const response = await fetch(`${httpBaseUrl}/anonymous`);
+      const response = await fetch(`${httpBaseUrl}/anonymous`, {
+        headers: { 'X-Forwarded-For': clientIp },
+      });
       expect(response.status).toBe(200);
     }
 
-    const limited = await fetch(`${httpBaseUrl}/anonymous`);
+    const limited = await fetch(`${httpBaseUrl}/anonymous`, {
+      headers: { 'X-Forwarded-For': clientIp },
+    });
     expect(limited.status).toBe(429);
     expect(limited.headers.get('retry-after')).toBe('60');
   });

@@ -59,6 +59,30 @@ POST /api/v1/venues/conflicts
 
 These are defense-in-depth checks: the guards authenticate/authorize every non-public route, and repository queries are scoped to the current principal. The HTTP integration tests exercise the real Nest adapter, rate-limit service, PostgreSQL, and Redis.
 
+## Stage 9 real-time dashboard
+
+The Socket.IO namespace `/realtime` is served at the API origin using
+websocket-only transport. Its message shapes, authorization, exact-origin
+policy, Redis fanout, rate caps, and allowlisted dashboard payload are
+specified in [the real-time dashboard contract](./realtime-dashboard.md).
+The dashboard is not an HTTP route and therefore does not appear in the
+generated route list above.
+
+The gateway authenticates the handshake `auth.accessToken` with the normal
+JWT/session-family validator; tokens in query strings are rejected. Only
+admins and organizers with active membership in the event's club can join an
+event room, and failed/unknown joins return the same masked response. The
+gateway checks session and membership revocation on a three-second interval,
+disconnects on token expiry/logout, and caps connections and messages.
+
+The real PostgreSQL/Redis Socket.IO integration tests in
+`apps/api/test/rsvps.integration.ts` cover masked joins, membership eviction,
+session expiry and revocation, exact origin, connection/message limits,
+post-commit-only updates, concurrent check-in count, allowlisted personal
+data, and cross-instance Redis delivery. The Playwright real API test in
+`apps/web/e2e/api-database.spec.ts` verifies the live count update, logout
+state clearing, CSP, and axe accessibility.
+
 ## Stage 7 signed tickets and check-in
 
 | Route                                     | Authorization and response scope                                                                                                                             | Cache, rate limit, and audit                                                               | Test evidence                                                                                                                                                                                                                                                                                                                                                                                       |
