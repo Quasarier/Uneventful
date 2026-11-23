@@ -329,6 +329,23 @@ describe('events PostgreSQL/HTTP integration', () => {
 
   afterEach(async () => {
     if (userIds.length > 0) {
+      await migrationPrisma.notification.deleteMany({
+        where: {
+          OR: [
+            ...(eventIds.length > 0 ? [{ eventId: { in: eventIds } }] : []),
+            { userId: { in: userIds } },
+          ],
+        },
+      });
+      await migrationPrisma.notificationPreference.deleteMany({
+        where: { userId: { in: userIds } },
+      });
+      await migrationPrisma.notificationConsent.deleteMany({
+        where: { userId: { in: userIds } },
+      });
+      await migrationPrisma.pushSubscription.deleteMany({
+        where: { userId: { in: userIds } },
+      });
       if (eventIds.length > 0) {
         await migrationPrisma.venueBooking.deleteMany({
           where: { eventId: { in: eventIds } },
