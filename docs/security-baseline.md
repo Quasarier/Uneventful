@@ -1,6 +1,6 @@
 # Dependency Security Baseline
 
-Reviewed: 2026-11-21
+Reviewed: 2026-11-22
 
 `pnpm audit` and OSV Scanner report no known vulnerabilities in the current
 lockfile. The glob and minimatch advisories were removed from the baseline
@@ -107,3 +107,45 @@ transaction commits; duplicates do not create additional check-ins or
 broadcasts. The Redis adapter distributes committed updates across API
 instances. The page uses ephemeral React state and disconnects/clears it on
 logout; it does not persist dashboard data or credentials in browser storage.
+
+## Email and web-push notifications
+
+Notification preferences are scoped to the authenticated user and expose only
+allowlisted channel/type/enabled fields. Email defaults on and push defaults
+off. Preference changes and one-click email unsubscribe create consent and
+append-only audit records; transactional email opt-outs require an explicit
+opt-out record. The unsubscribe token uses a separate HMAC key from JWT and
+ticket signing, expires, is idempotent, and returns the same no-content
+response for valid and invalid or unknown-user tokens. Its unauthenticated POST
+is rate-limited.
+
+Delivery rows are inserted transactionally with the source RSVP/event update.
+The dispatcher uses stable job IDs, a delivery lease, bounded exponential
+retries, and dead-letter status. Resend receives the delivery ID as its
+idempotency key. Web-push payloads contain only a generic title, event name,
+and relative event link; they exclude user identity, email, RSVP, and ticket
+data. The local/test email transport only records messages and never sends.
+Production startup requires the configured Resend sender/credentials,
+unsubscribe key, and complete VAPID settings.
+
+Push subscription endpoints are accepted only over HTTPS, with DNS results
+checked against private, loopback, and reserved IP ranges both on registration
+and delivery. A DNS change between validation and the Web Push client's
+connection remains a residual SSRF race because the provider library performs
+its own resolution. Subscription ownership and a per-user cap are enforced
+under a user-row lock; provider 404/410 responses remove subscriptions.
+Templates HTML-escape database variables, strip CR/LF from subject/header
+values, include a plain-text alternative, and use the configured web origin
+for event links. Resend idempotency and push topic deduplication reduce
+duplicate sends, but neither arbitrary external push providers nor a lost
+provider response can provide a universal exactly-once delivery guarantee.
+
+The notification integration suite verifies authenticated self-scoping,
+allowlisted DTO validation, consent/audit rows, unsubscribe token variants and
+rate limits, HTTPS/private push endpoint rejection, subscription caps and
+410 cleanup, transactional outbox deduplication/rollback, reminder
+cancellation/rescheduling, waitlist promotion, email escaping/header
+injection resistance, push payload privacy, Redis quotas, BullMQ retry
+configuration, and dead-letter behavior. The settings page has Playwright
+coverage for preference updates, click-only push permission, CSP headers, and
+axe accessibility.
