@@ -67,6 +67,44 @@ describe('validateEnvironment', () => {
     ).toThrow(/GOOGLE_CALLBACK_URL, WEB_ORIGIN/);
   });
 
+  it('refuses production without a real email provider, unsubscribe key, and VAPID keys', () => {
+    let message: string | undefined;
+    try {
+      validateEnvironment({
+        ...validEnvironment,
+        NODE_ENV: 'production',
+        GOOGLE_CALLBACK_URL: 'https://api.example.edu/api/v1/auth/google/callback',
+        WEB_ORIGIN: 'https://campus.example.edu',
+        JWT_ISSUER: 'https://api.example.edu',
+      });
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      message = error.message;
+    }
+
+    expect(message).toContain('NOTIFICATION_EMAIL_PROVIDER');
+    expect(message).toContain('NOTIFICATION_UNSUBSCRIBE_SECRET');
+    expect(message).toContain('WEB_PUSH_VAPID_PUBLIC_KEY');
+    expect(message).not.toContain('test-session-secret');
+  });
+
+  it('requires Resend credentials when the real email adapter is selected', () => {
+    expect(() =>
+      validateEnvironment({
+        ...validEnvironment,
+        NOTIFICATION_EMAIL_PROVIDER: 'resend',
+      }),
+    ).toThrow(/NOTIFICATION_EMAIL_API_KEY/);
+    expect(
+      validateEnvironment({
+        ...validEnvironment,
+        NOTIFICATION_EMAIL_PROVIDER: 'resend',
+        NOTIFICATION_EMAIL_API_KEY: 'test-provider-key',
+        NOTIFICATION_EMAIL_FROM_ADDRESS: 'notifications@example.edu',
+      }).NOTIFICATION_EMAIL_PROVIDER,
+    ).toBe('resend');
+  });
+
   it('requires WEB_ORIGIN to be an origin rather than a path', () => {
     expect(() =>
       validateEnvironment({
