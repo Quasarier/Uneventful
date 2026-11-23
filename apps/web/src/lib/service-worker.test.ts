@@ -5,8 +5,9 @@ import { describe, expect, it, vi } from 'vitest';
 const serviceWorkerSource = readFileSync('public/sw.js', 'utf8');
 
 interface WorkerEvent {
-  data?: { type?: string };
+  data?: { type?: string; json?: () => unknown };
   request?: Request;
+  notification?: { close: () => void; data?: unknown };
   waitUntil: (promise: Promise<unknown>) => void;
   respondWith: (response: Promise<Response>) => void;
 }
@@ -38,8 +39,13 @@ function createWorker(
   };
   const self = {
     addEventListener: (name: string, handler: WorkerHandler) => handlers.set(name, handler),
-    clients: { claim: vi.fn(async () => undefined) },
+    clients: {
+      claim: vi.fn(async () => undefined),
+      matchAll: vi.fn(async () => []),
+      openWindow: vi.fn(async () => undefined),
+    },
     location: { origin: 'https://uneventful.test' },
+    registration: { showNotification: vi.fn(async () => undefined) },
     skipWaiting: vi.fn(async () => undefined),
   };
   runInNewContext(serviceWorkerSource, {
@@ -165,5 +171,49 @@ describe('service worker cache policy', () => {
     await logout.pending();
 
     expect(worker.deletedCaches).toEqual(['uneventful-static-v1', 'uneventful-user-data-v1']);
+  });
+
+  it('displays only the generic same-origin push payload without caching it', async () => {
+    const worker = createWorker();
+    const push = extendableEvent({
+      data: {
+        json: () => ({
+          title: 'CampusPulse update',
+          eventName: 'Campus fair',
+          link: '/events/32bb590f-f720-4f4a-9b14-2a50764234c5',
+        }),
+      },
+    });
+
+    worker.handlers.get('push')?.(push.event);
+    await push.pending();
+
+    expect(worker.self.registration.showNotification).toHaveBeenCalledWith(
+      'CampusPulse update',
+      expect.objectContaining({
+        body: 'Campus fair',
+        data: { link: '/events/32bb590f-f720-4f4a-9b14-2a50764234c5' },
+      }),
+    );
+    expect(worker.fetchAsset).not.toHaveBeenCalled();
+    expect(worker.cacheWrites).toEqual([]);
+  });
+
+  it('ignores malformed and cross-origin push notification links', async () => {
+    const worker = createWorker();
+    const push = extendableEvent({
+      data: {
+        json: () => ({
+          title: 'CampusPulse update',
+          eventName: 'Campus fair',
+          link: 'https://attacker.invalid/events/32bb590f-f720-4f4a-9b14-2a50764234c5',
+        }),
+      },
+    });
+
+    worker.handlers.get('push')?.(push.event);
+    await push.pending();
+
+    expect(worker.self.registration.showNotification).not.toHaveBeenCalled();
   });
 });

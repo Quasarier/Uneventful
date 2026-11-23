@@ -10,6 +10,7 @@ const navigation = [
   { href: '/clubs', label: 'Clubs' },
   { href: '/tickets', label: 'Tickets' },
   { href: '/calendar', label: 'Calendar' },
+  { href: '/notifications', label: 'Notifications' },
   { href: '/profile', label: 'Profile' },
 ];
 
