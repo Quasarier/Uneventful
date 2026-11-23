@@ -47,6 +47,12 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     { ManualCheckinDto },
     { ManualCheckinLookupDto },
     { MyRsvpsController },
+    { NotificationDeliveryProcessor },
+    { NotificationDeliveryService },
+    { NotificationOutboxDispatcher },
+    { NotificationsController },
+    { NotificationsService },
+    { ResendEmailProvider },
     { PrismaService },
     { RejectEventDto },
     { RolesGuard },
@@ -65,6 +71,8 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     { VenuesController },
     { VenuesRepository },
     { VenuesService },
+    { UnsubscribeService },
+    { VapidPushProvider },
   ] = await Promise.all([
     import('../../src/app.controller'),
     import('../../src/app.service'),
@@ -98,6 +106,12 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     import('../../src/rsvps/dto/manual-checkin.dto'),
     import('../../src/rsvps/dto/manual-checkin-lookup.dto'),
     import('../../src/rsvps/my-rsvps.controller'),
+    import('../../src/notifications/notification-delivery.processor'),
+    import('../../src/notifications/notification-delivery.service'),
+    import('../../src/notifications/notification-outbox.dispatcher'),
+    import('../../src/notifications/notifications.controller'),
+    import('../../src/notifications/notifications.service'),
+    import('../../src/notifications/email-provider'),
     import('../../src/database/prisma.service'),
     import('../../src/events/dto/reject-event.dto'),
     import('../../src/auth/roles.guard'),
@@ -116,6 +130,8 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     import('../../src/venues/venues.controller'),
     import('../../src/venues/venues.repository'),
     import('../../src/venues/venues.service'),
+    import('../../src/notifications/unsubscribe.service'),
+    import('../../src/notifications/web-push-provider'),
   ]);
 
   defineConstructorTypes(AppController, [AppService, HealthService]);
@@ -161,6 +177,25 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     ConfigService,
   ]);
   defineConstructorTypes(MyRsvpsController, [RsvpsService]);
+  defineConstructorTypes(NotificationDeliveryProcessor, [NotificationDeliveryService]);
+  defineConstructorTypes(NotificationDeliveryService, [
+    PrismaService,
+    ConfigService,
+    AuthRateLimitService,
+    UnsubscribeService,
+    Object,
+    Object,
+    Object,
+  ]);
+  defineConstructorTypes(NotificationOutboxDispatcher, [PrismaService, Object]);
+  defineConstructorTypes(NotificationsController, [
+    NotificationsService,
+    UnsubscribeService,
+    AuthRateLimitService,
+    ConfigService,
+  ]);
+  defineConstructorTypes(NotificationsService, [PrismaService, ConfigService, Object]);
+  defineConstructorTypes(ResendEmailProvider, [ConfigService]);
   defineConstructorTypes(PrismaService, [ConfigService]);
   defineConstructorTypes(RolesGuard, [Reflector]);
   defineConstructorTypes(RsvpPromotionOutboxDispatcher, [PrismaService, Object]);
@@ -174,6 +209,8 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
   defineConstructorTypes(VenuesController, [VenuesService, AuthRateLimitService]);
   defineConstructorTypes(VenuesRepository, [PrismaService]);
   defineConstructorTypes(VenuesService, [VenuesRepository, VenueBookingsService]);
+  defineConstructorTypes(UnsubscribeService, [PrismaService, ConfigService]);
+  defineConstructorTypes(VapidPushProvider, [ConfigService]);
 
   defineMethodTypes(AppController, 'getLiveness', []);
   defineMethodTypes(AppController, 'getReadiness', []);

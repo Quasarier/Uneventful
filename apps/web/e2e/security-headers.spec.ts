@@ -2,7 +2,16 @@ import { expect, test } from '@playwright/test';
 import { mockStudentApi } from './mock-api';
 
 const scannerPath = '/events/45b7f5a1-4de0-4bfc-b3a0-918f89375c10/scanner';
-const pagePaths = ['/login', '/events', '/clubs', '/calendar', '/tickets', '/profile', scannerPath];
+const pagePaths = [
+  '/login',
+  '/events',
+  '/clubs',
+  '/calendar',
+  '/tickets',
+  '/profile',
+  '/notifications',
+  scannerPath,
+];
 
 test('sets security headers and a per-response nonce on main pages', async ({ page }) => {
   await mockStudentApi(page);

@@ -120,6 +120,44 @@ disconnects the socket and clears the in-memory view. See the [real-time
 dashboard contract](./docs/realtime-dashboard.md) for message and security
 details.
 
+## Email and web-push notifications
+
+The API writes notifications and their per-channel delivery rows in the same
+PostgreSQL transaction as the RSVP or event change. A Redis-backed BullMQ
+dispatcher delivers committed rows with exponential retries, a bounded attempt
+count, dead-letter status, and a stable delivery idempotency key. Reminder
+times use the event's UTC start instant; RSVP cancellation and event
+cancellation or rescheduling cancel or replace pending reminders.
+
+Email is enabled by default for each notification type; push is disabled by
+default and requires an explicit browser permission action and subscription.
+Preference changes create timestamped consent records. Email opt-outs are
+explicit; one-click unsubscribe is a signed, expiring, idempotent POST and
+never reports whether an account exists. There are no organizer bulk
+announcements in this stage. Local and test environments use a recording
+transport that never sends messages. Production startup requires the Resend
+provider, sender address, separate unsubscribe signing key, and complete VAPID
+configuration. Store these values in the deployment secret manager; do not
+commit them or print them in logs.
+
+Email templates escape database-sourced names, event titles, and venues, strip
+line breaks from subject/header values, include plain text, and build event
+links from `WEB_ORIGIN`. The API accepts only HTTPS push endpoints, resolves
+their DNS addresses at subscription and delivery time, rejects private,
+loopback, and reserved addresses, and removes provider-expired subscriptions.
+Push payloads contain only a generic title, event name, and relative event
+path. The service worker displays pushes without caching authenticated
+content. Delivery is idempotent at the outbox and provider-key boundaries, but
+external email/push providers do not offer a universal exactly-once guarantee
+if a process loses its response after the provider accepts a message.
+
+Before enabling production email, verify the sending domain with the selected
+provider and publish its SPF authorization and DKIM records. Publish a DMARC
+TXT record for `_dmarc.<sending-domain>`; start with `p=none` and aggregate
+reporting while validating SPF/DKIM alignment, then move toward `quarantine`
+or `reject` once legitimate mail passes. Keep a single SPF record per domain
+and re-check provider-specific DNS values after changes.
+
 The club directory is derived from public event data, so it lists clubs with discoverable public events rather than clubs with no public events. The ticket page issues a signed ticket only when requested, keeps the raw token in component memory, and displays its QR code without persisting it. The scanner route alone enables camera permission; other routes use `camera=()`. The service worker precaches only `/offline.html` and `/icons/icon.svg`, serves the icon cache-first, and uses network-first navigation with the offline page as fallback. It does not cache API requests, requests carrying `Authorization`, responses carrying `Set-Cookie` or `Cache-Control: no-store`, or page navigations; it removes older static caches on activation and clears app caches on logout. The API's `GET /api/v1/events/:id/rsvp/status` and `GET /api/v1/rsvps/me` responses are private/no-store; the latter returns only the current student's active RSVP and safe ticket metadata.
 
 The web app requires `NEXT_PUBLIC_WEB_ORIGIN` and `NEXT_PUBLIC_API_BASE_URL` to match the configured deployment origins. In local development, set them to `http://localhost:3000` and `http://localhost:3001/api/v1`, respectively; OAuth refresh cookies remain Secure and should be tested in a browser context that can use those cookie settings.

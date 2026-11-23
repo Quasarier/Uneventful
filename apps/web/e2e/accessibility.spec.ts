@@ -3,6 +3,12 @@ import { expect, test } from '@playwright/test';
 import type { components } from '@/lib/api-schema';
 import { mockStudentApi, testEvent } from './mock-api';
 
+declare global {
+  interface Window {
+    __notificationPermissionCalls?: number;
+  }
+}
+
 const accessibilityTags = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
 
 test('login page has no WCAG A/AA accessibility violations', async ({ page }) => {
@@ -53,6 +59,44 @@ test('profile page has no WCAG A/AA accessibility violations', async ({ page }) 
   await expect(page.getByRole('heading', { name: 'Profile' })).toBeVisible();
   const results = await new AxeBuilder({ page }).withTags(accessibilityTags).analyze();
   expect(results.violations).toEqual([]);
+});
+
+test('notification settings have no WCAG A/AA accessibility violations', async ({ page }) => {
+  await mockStudentApi(page);
+  await page.goto('/notifications');
+  await expect(page.getByRole('heading', { name: 'Notifications' })).toBeVisible();
+  const results = await new AxeBuilder({ page }).withTags(accessibilityTags).analyze();
+  expect(results.violations).toEqual([]);
+});
+
+test('notification settings save channel and type preferences', async ({ page }) => {
+  await mockStudentApi(page);
+  await page.goto('/notifications');
+  const preference = page.getByRole('region', { name: 'Email' }).getByRole('checkbox', {
+    name: 'Rsvp Confirmed',
+  });
+  await expect(preference).toBeChecked();
+  await preference.click();
+  await expect(page.getByRole('status')).toContainText('Notification preference saved.');
+  await expect(preference).not.toBeChecked();
+});
+
+test('push permission is requested only after the user activates the button', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__notificationPermissionCalls = 0;
+    Notification.requestPermission = () => {
+      window.__notificationPermissionCalls = (window.__notificationPermissionCalls ?? 0) + 1;
+      return Promise.resolve('denied');
+    };
+  });
+  await mockStudentApi(page);
+  await page.goto('/notifications');
+  await expect(page.getByRole('heading', { name: 'Notifications' })).toBeVisible();
+
+  await expect.poll(() => page.evaluate(() => window.__notificationPermissionCalls)).toBe(0);
+  await page.getByRole('button', { name: 'Enable push on this device' }).click();
+  await expect(page.getByText('Browser notification permission was not granted.')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__notificationPermissionCalls)).toBe(1);
 });
 
 test('check-in scanner has no WCAG A/AA accessibility violations', async ({ page }) => {

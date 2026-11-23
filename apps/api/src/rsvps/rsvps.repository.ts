@@ -17,6 +17,11 @@ import { toEventResponseDto } from '../events/event-response.dto';
 import type { AuthPrincipal } from '../auth/auth.types';
 import { TicketSigningService } from './ticket-signing.service';
 import {
+  cancelPendingRsvpReminders,
+  enqueueNotifications,
+  scheduleRsvpReminders,
+} from '../notifications/notification-outbox';
+import {
   MAX_ATTENDEE_PAGE_SIZE,
   type EventAttendeeDto,
   type ListEventAttendeesDto,
@@ -275,17 +280,30 @@ export class RsvpsRepository {
         const ticketToken = going
           ? await this.issueTicketInTransaction(tx, rsvp.id, event.id, event.endAt)
           : null;
-        await this.createNotification(
-          tx,
-          userId,
-          eventId,
-          going ? NotificationType.RSVP_CONFIRMED : NotificationType.WAITLISTED,
-          going ? 'RSVP confirmed' : 'Added to waitlist',
-          going
-            ? `Your RSVP for ${event.title} is confirmed.`
-            : `You are on the waitlist for ${event.title}.`,
-          `rsvp-${randomUUID()}`,
-        );
+        const notificationType = going
+          ? NotificationType.RSVP_CONFIRMED
+          : NotificationType.WAITLISTED;
+        await enqueueNotifications(tx, [
+          {
+            userId,
+            eventId,
+            type: notificationType,
+            title: going ? 'RSVP confirmed' : 'Added to waitlist',
+            body: going
+              ? `Your RSVP for ${event.title} is confirmed.`
+              : `You are on the waitlist for ${event.title}.`,
+            dedupeKey: `rsvp:${rsvp.id}:${notificationType}:${Date.now()}`,
+          },
+        ]);
+        if (going) {
+          await scheduleRsvpReminders(tx, {
+            userId,
+            eventId,
+            rsvpId: rsvp.id,
+            eventTitle: event.title,
+            startAt: event.startAt,
+          });
+        }
 
         return {
           id: rsvp.id,
@@ -320,6 +338,17 @@ export class RsvpsRepository {
         where: { id: rsvp.id },
         data: { status: RsvpStatus.CANCELLED, waitlistPosition: null },
       });
+      await cancelPendingRsvpReminders(tx, eventId, userId);
+      await enqueueNotifications(tx, [
+        {
+          userId,
+          eventId,
+          type: NotificationType.RSVP_CANCELLED,
+          title: 'RSVP cancelled',
+          body: `Your RSVP for ${event.title} has been cancelled.`,
+          dedupeKey: `rsvp-cancelled:${rsvp.id}:${Date.now()}`,
+        },
+      ]);
       if (rsvp.ticket && rsvp.ticket.status !== TicketStatus.REVOKED) {
         await tx.ticket.update({
           where: { id: rsvp.ticket.id },
@@ -430,15 +459,23 @@ export class RsvpsRepository {
         data: { status: RsvpStatus.GOING, waitlistPosition: null },
       });
       await this.issueTicketInTransaction(tx, next.id, event.id, event.endAt);
-      await this.createNotification(
-        tx,
-        next.userId,
+      await enqueueNotifications(tx, [
+        {
+          userId: next.userId,
+          eventId,
+          type: NotificationType.RSVP_CONFIRMED,
+          title: 'Waitlist spot available',
+          body: `A spot opened for ${event.title}; your RSVP is confirmed.`,
+          dedupeKey: `rsvp-promoted:${outboxId}`,
+        },
+      ]);
+      await scheduleRsvpReminders(tx, {
+        userId: next.userId,
         eventId,
-        NotificationType.RSVP_CONFIRMED,
-        'Waitlist spot available',
-        `A spot opened for ${event.title}; your RSVP is confirmed.`,
-        `rsvp-promoted:${outboxId}`,
-      );
+        rsvpId: next.id,
+        eventTitle: event.title,
+        startAt: event.startAt,
+      });
       await this.markPromotionProcessed(tx, outboxId);
     });
   }
@@ -557,20 +594,6 @@ export class RsvpsRepository {
     }
 
     return this.ticketSigning.issue({ ticketId, eventId, rsvpId }, expiresAt);
-  }
-
-  private async createNotification(
-    tx: Prisma.TransactionClient,
-    userId: string,
-    eventId: string,
-    type: NotificationType,
-    title: string,
-    body: string,
-    dedupeKey: string,
-  ): Promise<void> {
-    await tx.notification.create({
-      data: { userId, eventId, type, title, body, dedupeKey },
-    });
   }
 
   private assertRsvpOpen(startAt: Date, endAt: Date): void {

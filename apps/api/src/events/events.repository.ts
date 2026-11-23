@@ -1,8 +1,19 @@
 import { Injectable } from '@nestjs/common';
-import { EventStatus, Prisma, type RecurrenceFrequency } from '../../generated/prisma/client';
+import {
+  EventStatus,
+  NotificationType,
+  Prisma,
+  RsvpStatus,
+  type RecurrenceFrequency,
+} from '../../generated/prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { VenueBookingsService } from '../venues/venue-bookings.service';
 import type { EventOccurrence } from '../venues/venue-time';
+import {
+  buildRsvpReminderNotifications,
+  cancelPendingRsvpReminders,
+  enqueueNotifications,
+} from '../notifications/notification-outbox';
 
 const eventInclude = {
   club: { select: { name: true, slug: true } },
@@ -218,7 +229,20 @@ export class EventsRepository {
       `;
       const current = await transaction.event.findUnique({
         where: { id },
-        select: { venueId: true },
+        select: {
+          venueId: true,
+          title: true,
+          description: true,
+          status: true,
+          startAt: true,
+          endAt: true,
+          timeZone: true,
+          capacity: true,
+          expectedAttendance: true,
+          isPublic: true,
+          categoryId: true,
+          createdById: true,
+        },
       });
       if (!current) {
         return null;
@@ -279,6 +303,7 @@ export class EventsRepository {
           },
         });
       }
+      await this.updateEventNotifications(transaction, current, event);
       return event;
     }, bookingWriteTransactionOptions);
   }
@@ -338,6 +363,8 @@ export class EventsRepository {
           metadata: { fromStatus: expectedStatus, toStatus: EventStatus.CANCELLED },
         },
       });
+      await this.cancelEventReminders(transaction, event.id);
+      await this.enqueueEventCancellation(transaction, event);
       return event;
     }, bookingWriteTransactionOptions);
   }
@@ -425,5 +452,148 @@ export class EventsRepository {
       }
       return event;
     });
+  }
+
+  private async updateEventNotifications(
+    transaction: Prisma.TransactionClient,
+    previous: {
+      title: string;
+      description: string;
+      status: EventStatus;
+      startAt: Date;
+      endAt: Date;
+      timeZone: string;
+      capacity: number | null;
+      expectedAttendance: number | null;
+      isPublic: boolean;
+      categoryId: string;
+      createdById: string;
+      venueId: string | null;
+    },
+    event: EventRecord,
+  ): Promise<void> {
+    const changed =
+      previous.title !== event.title ||
+      previous.description !== event.description ||
+      previous.startAt.getTime() !== event.startAt.getTime() ||
+      previous.endAt.getTime() !== event.endAt.getTime() ||
+      previous.timeZone !== event.timeZone ||
+      previous.capacity !== event.capacity ||
+      previous.expectedAttendance !== event.expectedAttendance ||
+      previous.isPublic !== event.isPublic ||
+      previous.categoryId !== event.categoryId ||
+      previous.venueId !== event.venueId;
+    const statusChanged = previous.status !== event.status;
+
+    if (statusChanged && event.status === EventStatus.APPROVED) {
+      await enqueueNotifications(transaction, [
+        {
+          userId: event.createdById,
+          eventId: event.id,
+          type: NotificationType.EVENT_APPROVED,
+          title: 'Event approved',
+          body: `Your event ${event.title} has been approved.`,
+          dedupeKey: `event-approved:${event.id}:${event.updatedAt.getTime()}`,
+        },
+      ]);
+    } else if (statusChanged && event.status === EventStatus.REJECTED) {
+      await enqueueNotifications(transaction, [
+        {
+          userId: event.createdById,
+          eventId: event.id,
+          type: NotificationType.EVENT_REJECTED,
+          title: 'Event not approved',
+          body: `Your event ${event.title} was not approved.`,
+          dedupeKey: `event-rejected:${event.id}:${event.updatedAt.getTime()}`,
+        },
+      ]);
+    } else if (statusChanged && event.status === EventStatus.CANCELLED) {
+      await this.enqueueEventCancellation(transaction, event);
+    } else if (changed) {
+      await this.enqueueForEventRsvps(
+        transaction,
+        event,
+        NotificationType.EVENT_UPDATED,
+        'Event updated',
+        `${event.title} has been updated.`,
+      );
+    }
+
+    if (event.status !== EventStatus.APPROVED) {
+      await this.cancelEventReminders(transaction, event.id);
+    } else if (statusChanged || previous.startAt.getTime() !== event.startAt.getTime()) {
+      await this.cancelEventReminders(transaction, event.id);
+      const goingRsvps = await transaction.rsvp.findMany({
+        where: { eventId: event.id, status: RsvpStatus.GOING },
+        select: { id: true, userId: true },
+      });
+      await enqueueNotifications(
+        transaction,
+        goingRsvps.flatMap((rsvp) =>
+          buildRsvpReminderNotifications({
+            userId: rsvp.userId,
+            eventId: event.id,
+            rsvpId: rsvp.id,
+            eventTitle: event.title,
+            startAt: event.startAt,
+          }),
+        ),
+      );
+    }
+  }
+
+  private async enqueueEventCancellation(
+    transaction: Prisma.TransactionClient,
+    event: EventRecord,
+  ): Promise<void> {
+    await this.enqueueForEventRsvps(
+      transaction,
+      event,
+      NotificationType.EVENT_CANCELLED,
+      'Event cancelled',
+      `${event.title} has been cancelled.`,
+    );
+    await enqueueNotifications(transaction, [
+      {
+        userId: event.createdById,
+        eventId: event.id,
+        type: NotificationType.EVENT_CANCELLED,
+        title: 'Event cancelled',
+        body: `${event.title} has been cancelled.`,
+        dedupeKey: `event-cancelled-owner:${event.id}:${event.updatedAt.getTime()}`,
+      },
+    ]);
+  }
+
+  private async enqueueForEventRsvps(
+    transaction: Prisma.TransactionClient,
+    event: EventRecord,
+    type: NotificationType,
+    title: string,
+    body: string,
+  ): Promise<void> {
+    const rsvps = await transaction.rsvp.findMany({
+      where: {
+        eventId: event.id,
+        status: { in: [RsvpStatus.GOING, RsvpStatus.WAITLISTED, RsvpStatus.CHECKED_IN] },
+      },
+      select: { id: true, userId: true },
+    });
+    const notifications = rsvps.map((rsvp) => ({
+      userId: rsvp.userId,
+      eventId: event.id,
+      type,
+      title,
+      body,
+      dedupeKey: `event:${event.id}:${type}:${rsvp.id}:${event.updatedAt.getTime()}`,
+    }));
+    await enqueueNotifications(transaction, notifications);
+  }
+
+  private async cancelEventReminders(
+    transaction: Prisma.TransactionClient,
+    eventId: string,
+  ): Promise<void> {
+    await cancelPendingRsvpReminders(transaction, eventId);
   }
 }

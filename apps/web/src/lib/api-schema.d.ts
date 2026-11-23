@@ -55,6 +55,59 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/me/notification-preferences': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get the authenticated user's notification preferences */
+    get: operations['getNotificationPreferences'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /** Update the authenticated user's channel preferences and consent */
+    patch: operations['updateNotificationPreferences'];
+    trace?: never;
+  };
+  '/me/push-subscriptions': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Register an HTTPS Web Push subscription for the authenticated user */
+    post: operations['addPushSubscription'];
+    /** Remove one of the authenticated user's Web Push subscriptions */
+    delete: operations['removePushSubscription'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/unsubscribe': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Idempotently unsubscribe using a signed email token */
+    post: operations['unsubscribeEmail'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/events': {
     parameters: {
       query?: never;
@@ -366,6 +419,55 @@ export interface components {
       avatarUrl: string | null;
       /** @enum {string} */
       role: 'STUDENT' | 'ORGANIZER' | 'ADMIN';
+    };
+    /** @enum {string} */
+    NotificationChannel: 'EMAIL' | 'PUSH';
+    /** @enum {string} */
+    NotificationType:
+      | 'EVENT_SUBMITTED'
+      | 'EVENT_APPROVED'
+      | 'EVENT_REJECTED'
+      | 'EVENT_CANCELLED'
+      | 'EVENT_UPDATED'
+      | 'RSVP_CONFIRMED'
+      | 'RSVP_CANCELLED'
+      | 'WAITLISTED'
+      | 'EVENT_REMINDER'
+      | 'EVENT_REMINDER_24H'
+      | 'EVENT_REMINDER_1H'
+      | 'VENUE_BOOKING_UPDATED';
+    NotificationPreference: {
+      channel: components['schemas']['NotificationChannel'];
+      type: components['schemas']['NotificationType'];
+      enabled: boolean;
+    };
+    NotificationPreferences: {
+      data: {
+        preferences: components['schemas']['NotificationPreference'][];
+        pushSubscriptionCount: number;
+        vapidPublicKey: string | null;
+      };
+    };
+    NotificationPreferenceChange: {
+      channel: components['schemas']['NotificationChannel'];
+      type: components['schemas']['NotificationType'];
+      enabled: boolean;
+    };
+    PatchNotificationPreferencesRequest: {
+      preferences: components['schemas']['NotificationPreferenceChange'][];
+    };
+    PushSubscriptionKeys: {
+      p256dh: string;
+      auth: string;
+    };
+    PushSubscriptionRequest: {
+      /** Format: uri */
+      endpoint: string;
+      keys: components['schemas']['PushSubscriptionKeys'];
+    };
+    DeletePushSubscriptionRequest: {
+      /** Format: uri */
+      endpoint: string;
     };
     EventClub: {
       name: string;
@@ -787,6 +889,123 @@ export interface operations {
         };
       };
       401: components['responses']['Error'];
+    };
+  };
+  getNotificationPreferences: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The caller's channel preferences, push count, and public VAPID key. */
+      200: {
+        headers: {
+          'Cache-Control'?: 'private, no-store';
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['NotificationPreferences'];
+        };
+      };
+      401: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  updateNotificationPreferences: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['PatchNotificationPreferencesRequest'];
+      };
+    };
+    responses: {
+      /** @description The updated preferences. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['NotificationPreferences'];
+        };
+      };
+      400: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  addPushSubscription: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['PushSubscriptionRequest'];
+      };
+    };
+    responses: {
+      /** @description The subscription was stored without returning its endpoint or keys. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      400: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  removePushSubscription: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['DeletePushSubscriptionRequest'];
+      };
+    };
+    responses: {
+      /** @description The subscription was removed, if it existed. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      429: components['responses']['RateLimited'];
+    };
+  };
+  unsubscribeEmail: {
+    parameters: {
+      query: {
+        token: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The request was handled without revealing whether an account exists. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      429: components['responses']['RateLimited'];
     };
   };
   listEvents: {

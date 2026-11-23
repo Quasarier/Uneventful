@@ -64,6 +64,71 @@ self.addEventListener('message', (event) => {
   );
 });
 
+self.addEventListener('push', (event) => {
+  if (!event.data) {
+    return;
+  }
+  event.waitUntil(
+    (async () => {
+      let payload;
+      try {
+        payload = event.data.json();
+      } catch {
+        return;
+      }
+      if (
+        typeof payload !== 'object' ||
+        payload === null ||
+        Object.keys(payload).length !== 3 ||
+        payload.title !== 'CampusPulse update' ||
+        typeof payload.eventName !== 'string' ||
+        payload.eventName.length === 0 ||
+        payload.eventName.length > 200 ||
+        typeof payload.link !== 'string'
+      ) {
+        return;
+      }
+      const target = new URL(payload.link, self.location.origin);
+      if (
+        target.origin !== self.location.origin ||
+        (target.pathname !== '/events' && !/^\/events\/[0-9a-f-]{36}$/.test(target.pathname)) ||
+        target.search ||
+        target.hash
+      ) {
+        return;
+      }
+      await self.registration.showNotification(payload.title, {
+        body: payload.eventName,
+        data: { link: target.pathname },
+        tag: `campuspulse:${target.pathname}`,
+      });
+    })(),
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const link = event.notification.data?.link;
+  if (typeof link !== 'string') {
+    return;
+  }
+  const target = new URL(link, self.location.origin);
+  if (target.origin !== self.location.origin || !target.pathname.startsWith('/events')) {
+    return;
+  }
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      const existing = clients.find(
+        (client) => new URL(client.url).origin === self.location.origin,
+      );
+      if (existing) {
+        return existing.focus().then(() => existing.navigate(target.toString()));
+      }
+      return self.clients.openWindow(target.toString());
+    }),
+  );
+});
+
 self.addEventListener('fetch', (event) => {
   const request = event.request;
   const url = new URL(request.url);

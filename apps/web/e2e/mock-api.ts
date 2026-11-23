@@ -43,6 +43,29 @@ const corsHeaders = {
   'access-control-allow-origin': process.env.NEXT_PUBLIC_WEB_ORIGIN ?? 'http://localhost:3000',
 };
 
+const notificationTypes = [
+  'EVENT_SUBMITTED',
+  'EVENT_APPROVED',
+  'EVENT_REJECTED',
+  'EVENT_CANCELLED',
+  'EVENT_UPDATED',
+  'RSVP_CONFIRMED',
+  'RSVP_CANCELLED',
+  'WAITLISTED',
+  'EVENT_REMINDER',
+  'EVENT_REMINDER_24H',
+  'EVENT_REMINDER_1H',
+  'VENUE_BOOKING_UPDATED',
+] as const;
+
+const notificationPreferences = ['EMAIL', 'PUSH'].flatMap((channel) =>
+  notificationTypes.map((type) => ({
+    channel,
+    type,
+    enabled: channel === 'EMAIL',
+  })),
+);
+
 export async function mockStudentApi(
   page: Page,
   options: {
@@ -53,6 +76,7 @@ export async function mockStudentApi(
   } = {},
 ): Promise<void> {
   const event = options.event ?? testEvent;
+  const preferences = notificationPreferences.map((preference) => ({ ...preference }));
 
   await page.context().route('**/api/v1/**', async (route) => {
     const request = route.request();
@@ -82,6 +106,38 @@ export async function mockStudentApi(
         headers: corsHeaders,
         body: JSON.stringify(options.profile ?? profile),
       });
+      return;
+    }
+    if (url.pathname.endsWith('/me/notification-preferences')) {
+      if (request.method() === 'PATCH') {
+        const body = request.postDataJSON() as {
+          preferences?: Array<{ channel: string; type: string; enabled: boolean }>;
+        };
+        for (const change of body.preferences ?? []) {
+          const preference = preferences.find(
+            (item) => item.channel === change.channel && item.type === change.type,
+          );
+          if (preference) {
+            preference.enabled = change.enabled;
+          }
+        }
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: corsHeaders,
+        body: JSON.stringify({
+          data: {
+            preferences,
+            pushSubscriptionCount: 0,
+            vapidPublicKey: 'B'.repeat(87),
+          },
+        }),
+      });
+      return;
+    }
+    if (url.pathname.endsWith('/me/push-subscriptions')) {
+      await route.fulfill({ status: 204, headers: corsHeaders });
       return;
     }
     if (url.pathname.endsWith('/rsvp/status')) {

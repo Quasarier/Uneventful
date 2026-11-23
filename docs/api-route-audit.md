@@ -11,6 +11,7 @@ corepack pnpm --filter @uneventful/api routes
 ```text
 DELETE /api/v1/events/:id
 DELETE /api/v1/events/:id/rsvp
+DELETE /api/v1/me/push-subscriptions
 DELETE /api/v1/venues/:id
 GET /api/v1/auth/google
 GET /api/v1/auth/google/callback
@@ -24,10 +25,12 @@ GET /api/v1/events/:id/image
 GET /api/v1/events/:id/rsvp/status
 GET /api/v1/health/live
 GET /api/v1/health/ready
+GET /api/v1/me/notification-preferences
 GET /api/v1/rsvps/me
 GET /api/v1/venues
 GET /api/v1/venues/:id
 PATCH /api/v1/events/:id
+PATCH /api/v1/me/notification-preferences
 PATCH /api/v1/venues/:id
 POST /api/v1/auth/logout
 POST /api/v1/auth/logout-all
@@ -45,6 +48,8 @@ POST /api/v1/events/:id/rsvp
 POST /api/v1/events/:id/rsvp/ticket
 POST /api/v1/events/:id/submit
 POST /api/v1/events/series
+POST /api/v1/me/push-subscriptions
+POST /api/v1/unsubscribe
 POST /api/v1/venues
 POST /api/v1/venues/conflicts
 ```
@@ -107,3 +112,22 @@ Students and organizers without active event-club membership receive a masked 40
 | Venue conflict and event/venue booking writes                                                                                                                                                                           | Each endpoint fails closed on limiter failure and returns `429` with `Retry-After`.                                                                                                                                        | Rate-limit keys are per authenticated user.                                  | `rate-limits venue checks and booking writes with Retry-After` in `apps/api/test/events.integration.ts`.                                                                         |
 
 Booking writes serialize on a venue-row lock and retain the PostgreSQL GiST exclusion constraint as the final overlapping-approved-booking guard. Event instants are UTC; venue availability is interpreted using validated `CAMPUS_TIME_ZONE`. Conflict responses never include the other event's or organizer's details.
+
+## Stage 10 email and web-push notifications
+
+| Route                                                                        | Authorization and response scope                                                                                                    | Cache, rate limit, and audit                                                                                         | Integration coverage                                                                                                                                                           |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /api/v1/me/notification-preferences`                                    | Authenticated user only; allowlisted channel/type/enabled values and that user's subscription count.                                | Private/no-store; per-user limit.                                                                                    | `returns allowlisted defaults with no-store headers and keeps preferences self-scoped` in `apps/api/test/notifications.integration.ts`.                                        |
+| `PATCH /api/v1/me/notification-preferences`                                  | Authenticated user only; DTO rejects unknown fields, duplicates, and unsupported enum values.                                       | Private/no-store; per-user limit; preference and consent audit rows are transactional.                               | `rejects unknown preference fields and rate limits settings with Retry-After`; preference/audit assertions in the self-scope test.                                             |
+| `POST /api/v1/me/push-subscriptions`, `DELETE /api/v1/me/push-subscriptions` | Authenticated user's own HTTPS subscriptions only; endpoint ownership and per-user cap enforced server-side.                        | Private/no-store; per-user limit; subscription changes are audited.                                                  | `validates HTTPS push endpoints, enforces the per-user cap, and audits subscriptions`; `removes expired push subscriptions and limits push payloads to generic event details`. |
+| `POST /api/v1/unsubscribe`                                                   | Public, signed email-unsubscribe token only; identical no-content response for invalid, expired, replayed, and unknown-user tokens. | No-store/no-referrer; per-IP rate limit returning `429` with `Retry-After`; consent and audit writes are idempotent. | `accepts one-click unsubscribe idempotently and rejects expired, tampered, and wrong-purpose tokens`.                                                                          |
+
+Notification rows and channel deliveries are committed with RSVP/event writes;
+the BullMQ dispatcher applies stable delivery job IDs, exponential retries,
+and dead-letter handling. `apps/api/test/notifications.integration.ts` covers
+dedupe, rollback, event/RSVP lifecycle notifications, reminders,
+waitlist-promotion tickets, retry configuration, and delivery privacy.
+`apps/api/src/notifications/notification-template.spec.ts` covers HTML
+escaping, CR/LF-safe headers, and configured-origin event links. The settings
+page preference update, click-only push prompt, CSP, and axe checks are in
+`apps/web/e2e/accessibility.spec.ts` and `apps/web/e2e/security-headers.spec.ts`.

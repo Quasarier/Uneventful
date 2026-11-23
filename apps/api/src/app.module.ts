@@ -8,9 +8,18 @@ import { DatabaseModule } from './database/database.module';
 import { HealthService } from './health.service';
 import { RsvpsModule } from './rsvps/rsvps.module';
 import { VenuesModule } from './venues/venues.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
-  imports: [AppConfigModule, AuthModule, EventsModule, RsvpsModule, VenuesModule, DatabaseModule],
+  imports: [
+    AppConfigModule,
+    AuthModule,
+    EventsModule,
+    RsvpsModule,
+    VenuesModule,
+    NotificationsModule,
+    DatabaseModule,
+  ],
   controllers: [AppController],
   providers: [AppService, HealthService],
 })

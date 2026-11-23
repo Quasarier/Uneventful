@@ -4,6 +4,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { CreateBucketCommand, S3Client } from '@aws-sdk/client-s3';
+import webPush from 'web-push';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
 import type { Environment } from '../../src/config/environment';
@@ -17,6 +18,7 @@ import { installDecoratorMetadataForTsx } from './install-decorator-metadata';
 function setEphemeralTestCredentials(): void {
   const keyPair = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const ticketKeyPair = generateKeyPairSync('ed25519');
+  const vapidKeys = webPush.generateVAPIDKeys();
   process.env.JWT_PRIVATE_KEY_B64 = Buffer.from(
     keyPair.privateKey.export({ type: 'pkcs8', format: 'pem' }),
   ).toString('base64');
@@ -34,6 +36,11 @@ function setEphemeralTestCredentials(): void {
   process.env.JWT_ISSUER = 'https://api.uneventful.test';
   process.env.JWT_AUDIENCE = 'uneventful-api';
   process.env.SESSION_SECRET = randomBytes(32).toString('base64url');
+  process.env.NOTIFICATION_EMAIL_PROVIDER = 'test';
+  process.env.NOTIFICATION_UNSUBSCRIBE_SECRET = randomBytes(32).toString('base64url');
+  process.env.WEB_PUSH_VAPID_PUBLIC_KEY = vapidKeys.publicKey;
+  process.env.WEB_PUSH_VAPID_PRIVATE_KEY = vapidKeys.privateKey;
+  process.env.WEB_PUSH_VAPID_SUBJECT = 'mailto:security@example.edu';
   process.env.GOOGLE_CLIENT_ID = `e2e-${randomBytes(16).toString('hex')}`;
   process.env.GOOGLE_CLIENT_SECRET = randomBytes(32).toString('base64url');
   process.env.GOOGLE_CALLBACK_URL = `http://localhost:${process.env.PORT ?? '3001'}/api/v1/auth/google/callback`;

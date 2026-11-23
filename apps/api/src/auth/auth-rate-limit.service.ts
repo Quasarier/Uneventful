@@ -44,6 +44,30 @@ redis.call('ZREM', KEYS[1], ARGV[1])
 return 1
 `;
 
+const CONSUME_NOTIFICATION_QUOTA = `
+local user_count = tonumber(redis.call('GET', KEYS[1]) or '0')
+local global_count = tonumber(redis.call('GET', KEYS[2]) or '0')
+local retry_after = 0
+if user_count >= tonumber(ARGV[1]) then
+  retry_after = math.max(retry_after, redis.call('PTTL', KEYS[1]))
+end
+if global_count >= tonumber(ARGV[3]) then
+  retry_after = math.max(retry_after, redis.call('PTTL', KEYS[2]))
+end
+if retry_after > 0 then
+  return {0, retry_after}
+end
+user_count = redis.call('INCR', KEYS[1])
+if user_count == 1 then
+  redis.call('PEXPIRE', KEYS[1], ARGV[2])
+end
+global_count = redis.call('INCR', KEYS[2])
+if global_count == 1 then
+  redis.call('PEXPIRE', KEYS[2], ARGV[4])
+end
+return {1, 0}
+`;
+
 export type SessionRevocation =
   { familyId: string; userId?: never } | { userId: string; familyId?: never };
 
@@ -59,7 +83,9 @@ export type AuthRateLimitScope =
   | 'checkin-user'
   | 'venue-conflict-user'
   | 'venue-write-user'
-  | 'venue-booking-write-user';
+  | 'venue-booking-write-user'
+  | 'notification-user'
+  | 'notification-unsubscribe-ip';
 
 export interface RateLimitMessages {
   exceeded: string;
@@ -192,6 +218,39 @@ export class AuthRateLimitService implements OnModuleDestroy {
         Math.max(1, Math.ceil(windowMs / 1_000)),
       );
     }
+  }
+
+  async consumeNotificationQuota(
+    userId: string,
+    perUserPerHour: number,
+    globalPerDay: number,
+  ): Promise<{ allowed: boolean; retryAfterMs: number }> {
+    const userDigest = createHash('sha256').update(userId).digest('hex');
+    let result: unknown;
+    try {
+      result = await this.redis.eval(
+        CONSUME_NOTIFICATION_QUOTA,
+        2,
+        `uneventful:notification-quota:v1:user:${userDigest}`,
+        'uneventful:notification-quota:v1:global',
+        String(perUserPerHour),
+        String(60 * 60_000),
+        String(globalPerDay),
+        String(24 * 60 * 60_000),
+      );
+    } catch {
+      throw new ServiceUnavailableException('Notification delivery is temporarily unavailable.');
+    }
+
+    if (
+      !Array.isArray(result) ||
+      result.length !== 2 ||
+      !Number.isSafeInteger(Number(result[0])) ||
+      !Number.isSafeInteger(Number(result[1]))
+    ) {
+      throw new ServiceUnavailableException('Notification delivery is temporarily unavailable.');
+    }
+    return { allowed: Number(result[0]) === 1, retryAfterMs: Number(result[1]) };
   }
 
   private socketConnectionKey(userId: string): string {
