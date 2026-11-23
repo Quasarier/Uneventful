@@ -19,8 +19,11 @@ DECLARE
     duplicate_rsvp_id UUID := gen_random_uuid();
     audit_id UUID := gen_random_uuid();
     series_id UUID := gen_random_uuid();
+    notification_id UUID := gen_random_uuid();
     v_start_at TIMESTAMPTZ := '2035-02-01 10:00:00+00';
     ticket_status_values TEXT[];
+    notification_delivery_status_values TEXT[];
+    protected_table TEXT;
 BEGIN
     IF current_user <> 'uneventful_app' THEN
         RAISE EXCEPTION 'Constraint checks must run as uneventful_app, not %.', current_user;
@@ -30,6 +33,9 @@ BEGIN
        OR has_table_privilege(current_user, 'public._prisma_migrations', 'UPDATE')
        OR has_table_privilege(current_user, 'public._prisma_migrations', 'DELETE') THEN
         RAISE EXCEPTION 'Application role must not access Prisma migration metadata.';
+    END IF;
+    IF has_schema_privilege(current_user, 'public', 'CREATE') THEN
+        RAISE EXCEPTION 'Application role must not create objects in the public schema.';
     END IF;
 
     INSERT INTO users (id, email, google_subject, first_name, last_name, role)
@@ -360,6 +366,27 @@ BEGIN
         WHEN insufficient_privilege THEN NULL;
     END;
 
+    FOREACH protected_table IN ARRAY ARRAY[
+        'notification_deliveries',
+        'notification_preferences',
+        'notification_consents',
+        'push_subscriptions'
+    ] LOOP
+        BEGIN
+            EXECUTE format('ALTER TABLE public.%I ADD COLUMN app_role_ddl_probe INTEGER', protected_table);
+            RAISE EXCEPTION 'Expected application-role ALTER TABLE % to be rejected.', protected_table;
+        EXCEPTION
+            WHEN insufficient_privilege THEN NULL;
+        END;
+
+        BEGIN
+            EXECUTE format('DROP TABLE public.%I', protected_table);
+            RAISE EXCEPTION 'Expected application-role DROP TABLE % to be rejected.', protected_table;
+        EXCEPTION
+            WHEN insufficient_privilege THEN NULL;
+        END;
+    END LOOP;
+
     UPDATE clubs SET deleted_at = NOW() WHERE id = club_id;
     INSERT INTO clubs (id, name, slug, created_by_id)
     VALUES (gen_random_uuid(), 'Replacement Constraint Club', 'constraint-test-club', organizer_id);
@@ -395,6 +422,62 @@ BEGIN
     WHERE dedupe_key = 'constraint-reusable-notification';
     INSERT INTO notifications (id, user_id, dedupe_key, type, title, body)
     VALUES (gen_random_uuid(), student_id, 'constraint-reusable-notification', 'RSVP_CONFIRMED', 'Test', 'Test');
+
+    SELECT array_agg(e.enumlabel::text ORDER BY e.enumsortorder)
+    INTO notification_delivery_status_values
+    FROM pg_enum AS e
+    JOIN pg_type AS t ON t.oid = e.enumtypid
+    JOIN pg_namespace AS n ON n.oid = t.typnamespace
+    WHERE n.nspname = 'public'
+      AND t.typname = 'notification_delivery_status';
+
+    IF notification_delivery_status_values IS DISTINCT FROM ARRAY[
+        'PENDING', 'PROCESSING', 'SENT', 'SKIPPED', 'DEAD_LETTERED', 'CANCELLED'
+    ]::TEXT[] THEN
+        RAISE EXCEPTION 'Unexpected notification_delivery_status values: %.',
+            notification_delivery_status_values;
+    END IF;
+
+    INSERT INTO notifications (id, user_id, event_id, dedupe_key, type, title, body)
+    VALUES (notification_id, student_id, event_one_id, 'constraint-notification-delivery', 'RSVP_CONFIRMED', 'Test', 'Test');
+    INSERT INTO notification_deliveries (id, notification_id, channel)
+    VALUES (gen_random_uuid(), notification_id, 'EMAIL');
+
+    BEGIN
+        INSERT INTO notification_deliveries (id, notification_id, channel)
+        VALUES (gen_random_uuid(), notification_id, 'EMAIL');
+        RAISE EXCEPTION 'Expected one delivery per notification and channel.';
+    EXCEPTION
+        WHEN unique_violation THEN NULL;
+    END;
+
+    INSERT INTO notification_preferences (id, user_id, channel, type, enabled)
+    VALUES (gen_random_uuid(), student_id, 'EMAIL', 'RSVP_CONFIRMED', FALSE);
+
+    BEGIN
+        INSERT INTO notification_preferences (id, user_id, channel, type, enabled)
+        VALUES (gen_random_uuid(), student_id, 'EMAIL', 'RSVP_CONFIRMED', TRUE);
+        RAISE EXCEPTION 'Expected one preference per user, channel, and type.';
+    EXCEPTION
+        WHEN unique_violation THEN NULL;
+    END;
+
+    INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth)
+    VALUES (
+        gen_random_uuid(), student_id, 'https://push.example.invalid/constraint-test',
+        repeat('A', 87), repeat('B', 22)
+    );
+
+    BEGIN
+        INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth)
+        VALUES (
+            gen_random_uuid(), student_id, 'https://push.example.invalid/constraint-test',
+            repeat('C', 87), repeat('D', 22)
+        );
+        RAISE EXCEPTION 'Expected a push endpoint to be unique.';
+    EXCEPTION
+        WHEN unique_violation THEN NULL;
+    END;
 END;
 $$;
 
