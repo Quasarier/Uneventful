@@ -5,7 +5,18 @@ import { EventsRepository } from './events.repository';
 
 const event = {
   id: 'c5a59258-67d1-457a-a93f-e7993f31befa',
+  title: 'Campus meetup',
+  description: 'A campus event.',
   status: EventStatus.PENDING_APPROVAL,
+  startAt: new Date('2027-01-02T10:00:00.000Z'),
+  endAt: new Date('2027-01-02T11:00:00.000Z'),
+  timeZone: 'UTC',
+  capacity: 100,
+  expectedAttendance: 50,
+  isPublic: true,
+  categoryId: '65cad59a-8af7-4e8d-a527-1fe0eccf26da',
+  createdById: '93b1a3e8-0dfd-4c8c-a0a5-1f1790730011',
+  venueId: null,
   updatedAt: new Date('2027-01-01T00:00:00.000Z'),
   club: { id: '7c683bc4-2911-4f4d-aa95-167fd0dd9a32', name: 'Robotics', slug: 'robotics' },
   category: { id: '65cad59a-8af7-4e8d-a527-1fe0eccf26da', name: 'Workshop', slug: 'workshop' },
@@ -59,6 +70,7 @@ describe('EventsRepository audit transactions', () => {
         updateMany: vi.fn().mockResolvedValue({ count: 1 }),
         findUnique: vi.fn().mockResolvedValue(event),
       },
+      notificationDelivery: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
       auditLog: { create: vi.fn().mockResolvedValue({}) },
     };
     const prisma = {
