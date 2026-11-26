@@ -9,16 +9,21 @@ corepack pnpm --filter @uneventful/api routes
 ## Generated routes
 
 ```text
+DELETE /api/v1/clubs/:id/follow
 DELETE /api/v1/events/:id
 DELETE /api/v1/events/:id/rsvp
 DELETE /api/v1/me/push-subscriptions
+DELETE /api/v1/me/recommendation-data
 DELETE /api/v1/venues/:id
 GET /api/v1/auth/google
 GET /api/v1/auth/google/callback
 GET /api/v1/auth/me
+GET /api/v1/clubs/:id/analytics
 GET /api/v1/events
 GET /api/v1/events/:id
+GET /api/v1/events/:id/analytics
 GET /api/v1/events/:id/attendees
+GET /api/v1/events/:id/attendees/export
 GET /api/v1/events/:id/checkin-manifest
 GET /api/v1/events/:id/checkins/lookup
 GET /api/v1/events/:id/image
@@ -26,15 +31,19 @@ GET /api/v1/events/:id/rsvp/status
 GET /api/v1/health/live
 GET /api/v1/health/ready
 GET /api/v1/me/notification-preferences
+GET /api/v1/me/recommendation-preference
+GET /api/v1/recommendations
 GET /api/v1/rsvps/me
 GET /api/v1/venues
 GET /api/v1/venues/:id
 PATCH /api/v1/events/:id
 PATCH /api/v1/me/notification-preferences
+PATCH /api/v1/me/recommendation-preference
 PATCH /api/v1/venues/:id
 POST /api/v1/auth/logout
 POST /api/v1/auth/logout-all
 POST /api/v1/auth/refresh
+POST /api/v1/clubs/:id/follow
 POST /api/v1/events
 POST /api/v1/events/:id/approve
 POST /api/v1/events/:id/cancel
@@ -131,3 +140,19 @@ waitlist-promotion tickets, retry configuration, and delivery privacy.
 escaping, CR/LF-safe headers, and configured-origin event links. The settings
 page preference update, click-only push prompt, CSP, and axe checks are in
 `apps/web/e2e/accessibility.spec.ts` and `apps/web/e2e/security-headers.spec.ts`.
+
+## Stage 11 analytics, export, and recommendations
+
+| Route                                                                                     | Authorization and response scope                                                                                                                                    | Test coverage                                                                                                                                                                                                            |
+| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /api/v1/events/:id/analytics`, `GET /api/v1/clubs/:id/analytics`                     | Admin or organizer with active membership; parameterized SQL aggregates only; groups smaller than the configured minimum are suppressed; private/no-store.          | `returns aggregate-only analytics with hand-checked counts and suppresses small values`; `masks analytics and attendee exports from anonymous, student, and other-club callers` in `apps/api/test/rsvps.integration.ts`. |
+| `GET /api/v1/events/:id/attendees/export`                                                 | Admin or active event-club organizer; only display name, status, and check-in time; maximum 2,000 rows, formula-neutralized RFC 4180 CSV, audited and rate-limited. | `streams a privacy-limited CSV with formula-safe cells and records the export audit` in `apps/api/test/rsvps.integration.ts`; CSV unit tests in `apps/api/src/analytics/csv.spec.ts`.                                    |
+| `GET /api/v1/recommendations`                                                             | Student only; upcoming public or membership-visible events, excludes already-RSVPed events, and returns non-identifying reasons.                                    | Recommendation ranking unit tests in `apps/api/src/analytics/recommendation-ranking.spec.ts`; end-to-end eligibility and cache behavior require the PostgreSQL/Redis integration suite.                                  |
+| `GET/PATCH /api/v1/me/recommendation-preference`, `DELETE /api/v1/me/recommendation-data` | Student self-scope; per-user rate limit; opt-out is consented and audited; deletion clears derived user cache.                                                      | API integration coverage pending.                                                                                                                                                                                        |
+| `POST/DELETE /api/v1/clubs/:id/follow`                                                    | Student follows/unfollows an active club; preference change is audited and recommendation cache invalidated.                                                        | API integration coverage pending.                                                                                                                                                                                        |
+
+Analytics routes use no-store responses and 90-day/100-bucket bounds.
+`ANALYTICS_MIN_GROUP_SIZE` defaults to 5; recommendation co-attendance
+support defaults to 5 distinct students. The reproducible offline evaluation
+is a synthetic smoke check and does not establish production relevance or
+fairness.

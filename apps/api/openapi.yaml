@@ -779,6 +779,192 @@ paths:
                 $ref: '#/components/schemas/MyRsvps'
         '401':
           $ref: '#/components/responses/Error'
+  /events/{id}/analytics:
+    get:
+      operationId: getEventAnalytics
+      summary: Get privacy-suppressed aggregate analytics for an event
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/EventId'
+        - $ref: '#/components/parameters/AnalyticsFrom'
+        - $ref: '#/components/parameters/AnalyticsTo'
+        - $ref: '#/components/parameters/AnalyticsBucket'
+      responses:
+        '200':
+          description: Aggregate counts and trends with groups smaller than five suppressed.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventAnalytics'
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /clubs/{id}/analytics:
+    get:
+      operationId: getClubAnalytics
+      summary: Get privacy-suppressed aggregate analytics for a club
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/AnalyticsFrom'
+        - $ref: '#/components/parameters/AnalyticsTo'
+        - $ref: '#/components/parameters/AnalyticsBucket'
+      responses:
+        '200':
+          description: Club aggregate counts and trends with small groups suppressed.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClubAnalytics'
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /events/{id}/attendees/export:
+    get:
+      operationId: exportEventAttendees
+      summary: Stream a capped attendee CSV for an event
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/EventId'
+      responses:
+        '200':
+          description: UTF-8 CSV with a BOM; attendee rows are capped at 2,000.
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+            X-Content-Type-Options:
+              schema:
+                type: string
+                const: nosniff
+          content:
+            text/csv:
+              schema:
+                type: string
+        '404':
+          $ref: '#/components/responses/Error'
+        '413':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /recommendations:
+    get:
+      operationId: getRecommendations
+      summary: Get personalized or popular upcoming event recommendations
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Upcoming visible events and non-identifying recommendation reasons.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Recommendations'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /me/recommendation-preference:
+    get:
+      operationId: getRecommendationPreference
+      summary: Get the authenticated user's personalization setting
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Personalization preference.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecommendationPreference'
+    patch:
+      operationId: updateRecommendationPreference
+      summary: Update personalization preference and record consent
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecommendationPreference'
+      responses:
+        '200':
+          description: Updated personalization preference.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecommendationPreference'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /me/recommendation-data:
+    delete:
+      operationId: deleteRecommendationData
+      summary: Delete derived recommendation cache data for the current user
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Derived recommendation data was deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  deleted:
+                    type: boolean
+                    const: true
+                required: [deleted]
+  /clubs/{id}/follow:
+    post:
+      operationId: followClub
+      summary: Follow a club for recommendations
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ClubId'
+      responses:
+        '201':
+          description: The club is followed.
+        '404':
+          $ref: '#/components/responses/Error'
+    delete:
+      operationId: unfollowClub
+      summary: Unfollow a club
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ClubId'
+      responses:
+        '200':
+          description: The club is no longer followed.
+        '404':
+          $ref: '#/components/responses/Error'
 components:
   securitySchemes:
     bearerAuth:
@@ -792,6 +978,13 @@ components:
       schema:
         type: string
         format: uuid
+    ClubId:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+        format: uuid
     VenueId:
       in: path
       name: id
@@ -799,6 +992,24 @@ components:
       schema:
         type: string
         format: uuid
+    AnalyticsFrom:
+      in: query
+      name: from
+      schema:
+        type: string
+        format: date-time
+    AnalyticsTo:
+      in: query
+      name: to
+      schema:
+        type: string
+        format: date-time
+    AnalyticsBucket:
+      in: query
+      name: bucket
+      schema:
+        type: string
+        enum: [day, week]
   responses:
     Error:
       description: Request failed.
@@ -837,6 +1048,223 @@ components:
         error:
           type: string
       required: [statusCode, message]
+    AnalyticsPeriod:
+      type: object
+      additionalProperties: false
+      properties:
+        from:
+          type: string
+          format: date-time
+        to:
+          type: string
+          format: date-time
+        bucket:
+          type: string
+          enum: [day, week]
+      required: [from, to, bucket]
+    AnalyticsRsvpCounts:
+      type: object
+      additionalProperties: false
+      properties:
+        going:
+          type: [integer, 'null']
+        waitlisted:
+          type: [integer, 'null']
+        cancelled:
+          type: [integer, 'null']
+        checkedIn:
+          type: [integer, 'null']
+      required: [going, waitlisted, cancelled, checkedIn]
+    AnalyticsTrend:
+      type: object
+      additionalProperties: false
+      properties:
+        bucket:
+          type: string
+          format: date-time
+        total:
+          type: [integer, 'null']
+        going:
+          type: [integer, 'null']
+        waitlisted:
+          type: [integer, 'null']
+        cancelled:
+          type: [integer, 'null']
+        checkedIn:
+          type: [integer, 'null']
+      required: [bucket, total, going, waitlisted, cancelled, checkedIn]
+    AnalyticsBucketCount:
+      type: object
+      additionalProperties: false
+      properties:
+        bucket:
+          type: string
+          format: date-time
+        count:
+          type: integer
+          minimum: 5
+      required: [bucket, count]
+    AnalyticsPeakSignupHour:
+      type: object
+      additionalProperties: false
+      properties:
+        hour:
+          type: integer
+          minimum: 0
+          maximum: 23
+        signups:
+          type: integer
+          minimum: 5
+      required: [hour, signups]
+    EventAnalytics:
+      type: object
+      additionalProperties: false
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        period:
+          $ref: '#/components/schemas/AnalyticsPeriod'
+        rsvps:
+          $ref: '#/components/schemas/AnalyticsRsvpCounts'
+        noShowRate:
+          type: [number, 'null']
+          minimum: 0
+          maximum: 100
+        repeatAttendeeRate:
+          type: [number, 'null']
+          minimum: 0
+          maximum: 100
+        rsvpsOverTime:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/AnalyticsTrend'
+        checkInsByTime:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/AnalyticsBucketCount'
+        peakSignupHours:
+          type: array
+          maxItems: 5
+          items:
+            $ref: '#/components/schemas/AnalyticsPeakSignupHour'
+      required:
+        - eventId
+        - period
+        - rsvps
+        - noShowRate
+        - repeatAttendeeRate
+        - rsvpsOverTime
+        - checkInsByTime
+        - peakSignupHours
+    ClubAnalytics:
+      type: object
+      additionalProperties: false
+      properties:
+        clubId:
+          type: string
+          format: uuid
+        period:
+          $ref: '#/components/schemas/AnalyticsPeriod'
+        rsvps:
+          $ref: '#/components/schemas/AnalyticsRsvpCounts'
+        noShowRate:
+          type: [number, 'null']
+          minimum: 0
+          maximum: 100
+        repeatAttendeeRate:
+          type: [number, 'null']
+          minimum: 0
+          maximum: 100
+        rsvpsOverTime:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/AnalyticsTrend'
+        checkInsByTime:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/AnalyticsBucketCount'
+        peakSignupHours:
+          type: array
+          maxItems: 5
+          items:
+            $ref: '#/components/schemas/AnalyticsPeakSignupHour'
+        followerGrowth:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/AnalyticsBucketCount'
+        memberGrowth:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/AnalyticsBucketCount'
+      required:
+        - clubId
+        - period
+        - rsvps
+        - noShowRate
+        - repeatAttendeeRate
+        - rsvpsOverTime
+        - checkInsByTime
+        - peakSignupHours
+        - followerGrowth
+        - memberGrowth
+    RecommendationEvent:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        slug:
+          type: string
+        startAt:
+          type: string
+          format: date-time
+        endAt:
+          type: string
+          format: date-time
+        club:
+          $ref: '#/components/schemas/EventClub'
+        category:
+          $ref: '#/components/schemas/EventCategory'
+      required: [id, title, slug, startAt, endAt, club, category]
+    Recommendation:
+      type: object
+      additionalProperties: false
+      properties:
+        event:
+          $ref: '#/components/schemas/RecommendationEvent'
+        reason:
+          type: string
+          maxLength: 300
+      required: [event, reason]
+    Recommendations:
+      type: object
+      additionalProperties: false
+      properties:
+        data:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/Recommendation'
+        personalized:
+          type: boolean
+      required: [data, personalized]
+    RecommendationPreference:
+      type: object
+      additionalProperties: false
+      properties:
+        personalized:
+          type: boolean
+      required: [personalized]
     Session:
       type: object
       properties:
@@ -1124,6 +1552,13 @@ components:
           type: string
           minLength: 1
           maxLength: 20000
+        tags:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+            minLength: 1
+            maxLength: 48
         startAt:
           type: string
           format: date-time
@@ -1166,6 +1601,13 @@ components:
           type: string
           minLength: 1
           maxLength: 20000
+        tags:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+            minLength: 1
+            maxLength: 48
         startAt:
           type: string
           format: date-time
@@ -1333,6 +1775,11 @@ components:
           type: string
         description:
           type: string
+        tags:
+          type: array
+          maxItems: 20
+          items:
+            type: string
         status:
           type: string
           enum: [DRAFT, PENDING_APPROVAL, APPROVED, REJECTED, CANCELLED]
@@ -1379,6 +1826,7 @@ components:
         - title
         - slug
         - description
+        - tags
         - status
         - startAt
         - endAt
