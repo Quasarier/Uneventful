@@ -149,3 +149,39 @@ injection resistance, push payload privacy, Redis quotas, BullMQ retry
 configuration, and dead-letter behavior. The settings page has Playwright
 coverage for preference updates, click-only push permission, CSP headers, and
 axe accessibility.
+
+## Organizer analytics, CSV export, and recommendations
+
+Event/club analytics are SQL aggregates and use a configurable minimum group
+size (`ANALYTICS_MIN_GROUP_SIZE`, default 5). Counts below the minimum are
+returned as null or omitted; percentage values are suppressed unless both the
+numerator and its complement meet the threshold. Date ranges are capped at 90
+days and responses at 100 buckets. Queries use parameterized Prisma raw SQL
+and validated campus time-zone bucketing. Responses are explicit allowlists,
+private/no-store, and cached for 20 seconds under event/club-scoped keys.
+RSVP, cancellation, and successful check-in mutations invalidate the matching
+event, club, and user recommendation cache scopes.
+
+Attendee export selects only display name, RSVP status, and check-in time,
+fails if the 2,000-row cap would be exceeded, streams CSV rows, and audits the
+actor, event, row count, and export time. Formula-leading `=`, `+`, `-`, `@`,
+tab, and carriage return are neutralized; fields are quoted and escaped per
+RFC 4180 and embedded CR/LF is replaced with spaces. UTF-8 BOM is included for
+spreadsheet compatibility. The filename is normalized and bounded; responses
+are `text/csv`, private/no-store, and `nosniff`.
+
+Personalization is enabled by default and consent changes have timestamped
+records and audit entries. Recommendations combine category/tag matches,
+followed clubs, recency, popularity, and item-based co-attendance. The latter
+is only used above `RECOMMENDATIONS_MIN_SUPPORT` distinct attendees (default
+5). Opt-out avoids querying attendance history; a per-user cache is invalidated
+on RSVP, follow, or preference changes. Recommendation output contains public
+event fields and safe reasons only, and the explicit deletion endpoint clears
+derived per-user cache data. No persisted derived profile is created.
+
+The fixed-seed offline evaluation script reports precision@5 and candidate
+coverage on synthetic data. This is a reproducibility smoke check only; it
+does not validate production relevance, fairness, or privacy against a real
+population. Account deletion is not currently exposed as an API flow; if
+introduced, it must remove recommendation preferences/consent records and
+purge the user's derived cache before the account is considered deleted.
