@@ -4,6 +4,7 @@ export function createCorsOptions(webOrigin: string) {
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Authorization', 'Content-Type', 'X-Uneventful-CSRF'],
+    exposedHeaders: ['Content-Disposition'],
     maxAge: 600,
   };
 }
