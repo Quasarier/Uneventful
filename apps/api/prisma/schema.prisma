@@ -131,32 +131,35 @@ enum NotificationConsentAction {
 }
 
 model User {
-  id                       String                   @id @default(uuid()) @db.Uuid
+  id                       String                    @id @default(uuid()) @db.Uuid
   // Keep account identifiers globally reserved after soft deletion.
-  email                    String                   @unique @db.VarChar(320)
-  googleSubject            String                   @unique @map("google_subject") @db.VarChar(255)
-  firstName                String                   @map("first_name") @db.VarChar(100)
-  lastName                 String                   @map("last_name") @db.VarChar(100)
-  avatarUrl                String?                  @map("avatar_url") @db.VarChar(2048)
-  role                     UserRole                 @default(STUDENT)
-  tokenVersion             Int                      @default(0) @map("token_version")
-  isActive                 Boolean                  @default(true) @map("is_active")
-  deletedAt                DateTime?                @map("deleted_at") @db.Timestamptz(3)
-  createdAt                DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt                DateTime                 @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  email                    String                    @unique @db.VarChar(320)
+  googleSubject            String                    @unique @map("google_subject") @db.VarChar(255)
+  firstName                String                    @map("first_name") @db.VarChar(100)
+  lastName                 String                    @map("last_name") @db.VarChar(100)
+  avatarUrl                String?                   @map("avatar_url") @db.VarChar(2048)
+  role                     UserRole                  @default(STUDENT)
+  tokenVersion             Int                       @default(0) @map("token_version")
+  isActive                 Boolean                   @default(true) @map("is_active")
+  deletedAt                DateTime?                 @map("deleted_at") @db.Timestamptz(3)
+  createdAt                DateTime                  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                DateTime                  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
   memberships              ClubMembership[]
-  createdClubs             Club[]                   @relation("ClubCreator")
-  createdEvents            Event[]                  @relation("EventCreator")
-  approvedEvents           Event[]                  @relation("EventApprover")
-  pendingEventImageUploads Event[]                  @relation("EventImageUploader")
-  requestedBookings        VenueBooking[]           @relation("BookingRequester")
-  reviewedBookings         VenueBooking[]           @relation("BookingReviewer")
+  createdClubs             Club[]                    @relation("ClubCreator")
+  createdEvents            Event[]                   @relation("EventCreator")
+  approvedEvents           Event[]                   @relation("EventApprover")
+  pendingEventImageUploads Event[]                   @relation("EventImageUploader")
+  requestedBookings        VenueBooking[]            @relation("BookingRequester")
+  reviewedBookings         VenueBooking[]            @relation("BookingReviewer")
   rsvps                    Rsvp[]
-  checkedIns               CheckIn[]                @relation("CheckInActor")
+  checkedIns               CheckIn[]                 @relation("CheckInActor")
   notifications            Notification[]
   notificationPreferences  NotificationPreference[]
   notificationConsents     NotificationConsent[]
   pushSubscriptions        PushSubscription[]
+  followedClubs            ClubFollow[]
+  recommendationPreference RecommendationPreference?
+  recommendationConsents   RecommendationConsent[]
   auditLogs                AuditLog[]
   refreshTokens            RefreshToken[]
 
@@ -177,10 +180,25 @@ model Club {
   createdBy   User             @relation("ClubCreator", fields: [createdById], references: [id], onDelete: Restrict)
   memberships ClubMembership[]
   events      Event[]
+  followers   ClubFollow[]
 
   @@index([createdById])
   @@index([deletedAt])
   @@map("clubs")
+}
+
+model ClubFollow {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  clubId    String   @map("club_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  club      Club     @relation(fields: [clubId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, clubId])
+  @@index([clubId, createdAt])
+  @@index([userId, createdAt])
+  @@map("club_follows")
 }
 
 model ClubMembership {
@@ -199,6 +217,7 @@ model ClubMembership {
   @@unique([clubId, userId])
   @@index([userId, status])
   @@index([clubId, status])
+  @@index([clubId, status, joinedAt])
   @@map("club_memberships")
 }
 
@@ -267,6 +286,7 @@ model Event {
   title                 String                @db.VarChar(200)
   slug                  String                @db.VarChar(220)
   description           String                @db.Text
+  tags                  String[]              @default([])
   imageKey              String?               @map("image_key") @db.VarChar(512)
   pendingImageKey       String?               @map("pending_image_key") @db.VarChar(512)
   pendingImageExpiresAt DateTime?             @map("pending_image_expires_at") @db.Timestamptz(3)
@@ -350,6 +370,7 @@ model Rsvp {
 
   @@unique([eventId, userId])
   @@index([eventId, status, createdAt])
+  @@index([eventId, createdAt, status])
   @@index([userId, status, createdAt])
   @@map("rsvps")
 }
@@ -483,6 +504,27 @@ model PushSubscription {
 
   @@index([userId, createdAt])
   @@map("push_subscriptions")
+}
+
+model RecommendationPreference {
+  userId       String   @id @map("user_id") @db.Uuid
+  personalized Boolean  @default(true)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@map("recommendation_preferences")
+}
+
+model RecommendationConsent {
+  id        String                    @id @default(uuid()) @db.Uuid
+  userId    String                    @map("user_id") @db.Uuid
+  action    NotificationConsentAction
+  source    String                    @db.VarChar(64)
+  createdAt DateTime                  @default(now()) @map("created_at") @db.Timestamptz(3)
+  user      User                      @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, createdAt])
+  @@map("recommendation_consents")
 }
 
 model AuditLog {

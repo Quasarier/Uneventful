@@ -17,6 +17,7 @@ DECLARE
     deleted_event_replacement_id UUID := gen_random_uuid();
     rsvp_id UUID := gen_random_uuid();
     duplicate_rsvp_id UUID := gen_random_uuid();
+    follow_id UUID := gen_random_uuid();
     audit_id UUID := gen_random_uuid();
     series_id UUID := gen_random_uuid();
     notification_id UUID := gen_random_uuid();
@@ -46,6 +47,22 @@ BEGIN
 
     INSERT INTO clubs (id, name, slug, created_by_id)
     VALUES (club_id, 'Constraint Test Club', 'constraint-test-club', organizer_id);
+    INSERT INTO club_follows (id, user_id, club_id)
+    VALUES (follow_id, student_id, club_id);
+
+    BEGIN
+        INSERT INTO club_follows (id, user_id, club_id)
+        VALUES (gen_random_uuid(), student_id, club_id);
+        RAISE EXCEPTION 'Expected one club follow per user and club.';
+    EXCEPTION
+        WHEN unique_violation THEN NULL;
+    END;
+
+    INSERT INTO recommendation_preferences (user_id)
+    VALUES (student_id);
+    IF NOT (SELECT personalized FROM recommendation_preferences WHERE user_id = student_id) THEN
+        RAISE EXCEPTION 'Recommendation personalization must default to enabled.';
+    END IF;
 
     INSERT INTO event_categories (id, name, slug)
     VALUES (category_id, 'Constraint Tests', 'constraint-tests');
@@ -117,6 +134,18 @@ BEGIN
         (event_rejected_id, 'Rejected Booking Retry', 'constraint-event-rejected', 'Test fixture.', 'APPROVED',
          v_start_at + INTERVAL '3 hours', v_start_at + INTERVAL '4 hours', 50,
          club_id, category_id, organizer_id, admin_id, NOW());
+
+    BEGIN
+        UPDATE events
+        SET tags = ARRAY[
+            '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11',
+            '12', '13', '14', '15', '16', '17', '18', '19', '20', '21'
+        ]::TEXT[]
+        WHERE id = event_one_id;
+        RAISE EXCEPTION 'Expected the event tag-count limit to be enforced.';
+    EXCEPTION
+        WHEN check_violation THEN NULL;
+    END;
 
     INSERT INTO venue_bookings (
         id, event_id, venue_id, requested_by_id, reviewed_by_id, status,
@@ -367,10 +396,14 @@ BEGIN
     END;
 
     FOREACH protected_table IN ARRAY ARRAY[
+        'events',
         'notification_deliveries',
         'notification_preferences',
         'notification_consents',
-        'push_subscriptions'
+        'push_subscriptions',
+        'club_follows',
+        'recommendation_preferences',
+        'recommendation_consents'
     ] LOOP
         BEGIN
             EXECUTE format('ALTER TABLE public.%I ADD COLUMN app_role_ddl_probe INTEGER', protected_table);
