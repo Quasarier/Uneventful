@@ -159,6 +159,7 @@ export class EventsService {
         title: dto.title.trim(),
         slug: slugify(dto.title),
         description: sanitizeDescription(dto.description),
+        tags: [...new Set(dto.tags?.map((tag) => tag.trim().toLowerCase()) ?? [])],
         startAt,
         endAt,
         timeZone: dto.timeZone,
@@ -275,6 +276,9 @@ export class EventsService {
       ...(dto.title !== undefined ? { title: dto.title.trim(), slug: slugify(dto.title) } : {}),
       ...(dto.description !== undefined
         ? { description: sanitizeDescription(dto.description) }
+        : {}),
+      ...(dto.tags !== undefined
+        ? { tags: [...new Set(dto.tags.map((tag) => tag.trim().toLowerCase()))] }
         : {}),
       ...(dto.startAt !== undefined ? { startAt } : {}),
       ...(dto.endAt !== undefined ? { endAt } : {}),

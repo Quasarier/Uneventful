@@ -18,6 +18,6 @@ import { AuthRateLimitService, AUTH_RATE_LIMIT_REDIS } from './auth-rate-limit.s
     },
     AuthRateLimitService,
   ],
-  exports: [AuthRateLimitService],
+  exports: [AUTH_RATE_LIMIT_REDIS, AuthRateLimitService],
 })
 export class AuthRateLimitModule {}

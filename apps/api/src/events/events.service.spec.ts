@@ -331,6 +331,7 @@ describe('EventsService authorization and workflow', () => {
         'title',
         'slug',
         'description',
+        'tags',
         'status',
         'startAt',
         'endAt',

@@ -85,7 +85,10 @@ export type AuthRateLimitScope =
   | 'venue-write-user'
   | 'venue-booking-write-user'
   | 'notification-user'
-  | 'notification-unsubscribe-ip';
+  | 'notification-unsubscribe-ip'
+  | 'analytics-user'
+  | 'analytics-export-user'
+  | 'recommendation-user';
 
 export interface RateLimitMessages {
   exceeded: string;

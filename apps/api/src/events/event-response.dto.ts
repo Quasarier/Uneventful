@@ -10,6 +10,7 @@ export interface EventResponseDto {
   title: string;
   slug: string;
   description: string;
+  tags: string[];
   status: EventStatus;
   startAt: Date;
   endAt: Date;
@@ -37,6 +38,7 @@ export function toEventResponseDto(
     title: event.title,
     slug: event.slug,
     description: event.description,
+    tags: event.tags,
     status: event.status,
     startAt: event.startAt,
     endAt: event.endAt,
