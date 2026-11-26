@@ -13,6 +13,7 @@ const rsvp: MyRsvp = {
     title: 'Open, House; Night',
     slug: 'open-house',
     description: '<p>Bring snacks, please.</p>',
+    tags: [],
     status: 'APPROVED',
     startAt: '2026-04-02T18:00:00.000Z',
     endAt: '2026-04-02T20:00:00.000Z',
