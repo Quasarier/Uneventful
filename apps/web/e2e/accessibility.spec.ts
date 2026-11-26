@@ -61,6 +61,56 @@ test('profile page has no WCAG A/AA accessibility violations', async ({ page }) 
   expect(results.violations).toEqual([]);
 });
 
+test('event analytics page has aggregate data and no WCAG A/AA accessibility violations', async ({
+  page,
+}) => {
+  await mockStudentApi(page, {
+    profile: {
+      id: '98de1d25-a8f7-4ee7-9510-cc04a59181ef',
+      email: 'organizer@example.edu',
+      firstName: 'Campus',
+      lastName: 'Organizer',
+      avatarUrl: null,
+      role: 'ORGANIZER',
+    },
+  });
+  await page.goto(`/events/${testEvent.id}/analytics`);
+  await expect(page.getByRole('heading', { name: 'Event analytics' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'RSVP and check-in trends' })).toBeVisible();
+  const results = await new AxeBuilder({ page }).withTags(accessibilityTags).analyze();
+  expect(results.violations).toEqual([]);
+});
+
+test('recommendation preference opt-out is saved from profile settings', async ({ page }) => {
+  await mockStudentApi(page);
+  await page.goto('/profile');
+  const preference = page.getByRole('checkbox', {
+    name: 'Use my activity to personalize recommendations',
+  });
+  await expect(preference).toBeChecked();
+  await preference.click();
+  await expect(page.getByRole('status')).toContainText('Your preference has been saved.');
+  await expect(preference).not.toBeChecked();
+});
+
+test('attendee CSV export downloads from the organizer analytics page', async ({ page }) => {
+  await mockStudentApi(page, {
+    profile: {
+      id: '98de1d25-a8f7-4ee7-9510-cc04a59181ef',
+      email: 'organizer@example.edu',
+      firstName: 'Campus',
+      lastName: 'Organizer',
+      avatarUrl: null,
+      role: 'ORGANIZER',
+    },
+  });
+  await page.goto(`/events/${testEvent.id}/analytics`);
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export attendees' }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe('event-attendees.csv');
+});
+
 test('notification settings have no WCAG A/AA accessibility violations', async ({ page }) => {
   await mockStudentApi(page);
   await page.goto('/notifications');

@@ -8,6 +8,7 @@ const event = {
   title: 'Campus Showcase',
   slug: 'campus-showcase',
   description: 'Meet the campus clubs.',
+  tags: [],
   status: 'APPROVED',
   startAt: eventStart,
   endAt: eventEnd,

@@ -45,8 +45,9 @@ test('real API and database support browse, RSVP, waitlist, and cancellation', a
     expect(sessionResponse.status()).toBe(204);
     const page = await context.newPage();
     await page.goto('/events');
-    await expect(page.getByRole('link', { name: fixture.title })).toBeVisible();
-    await page.getByRole('link', { name: fixture.title }).click();
+    const eventLink = page.getByRole('article').getByRole('link', { name: fixture.title });
+    await expect(eventLink).toBeVisible();
+    await eventLink.click();
     await expect(page.getByRole('heading', { name: fixture.title })).toBeVisible();
     return page;
   }
@@ -562,7 +563,9 @@ test('refreshes an expired dashboard token before reconnect and stops after refr
     expect(sessionResponse.status()).toBe(204);
 
     page.on('request', (pageRequest) => {
-      if (pageRequest.url().endsWith('/auth/refresh')) refreshRequests += 1;
+      if (pageRequest.method() === 'POST' && pageRequest.url().endsWith('/auth/refresh')) {
+        refreshRequests += 1;
+      }
     });
     page.on('websocket', () => {
       websocketConnections += 1;
@@ -607,6 +610,10 @@ test('refreshes an expired dashboard token before reconnect and stops after refr
     });
     const socketsBeforeRejectedRefresh = websocketConnections;
     await page.route(`${apiBaseUrl}/auth/refresh`, async (route) => {
+      if (route.request().method() !== 'POST') {
+        await route.continue();
+        return;
+      }
       await route.fulfill({
         status: 401,
         contentType: 'application/json',

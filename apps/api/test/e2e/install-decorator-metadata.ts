@@ -17,6 +17,11 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
   const [
     { AppController },
     { AppService },
+    { AnalyticsCacheService },
+    { AnalyticsController },
+    { AnalyticsService },
+    { AnalyticsQueryDto },
+    { RecommendationPreferenceDto },
     { AuthController },
     { AuthRateLimitService },
     { AuthRepository },
@@ -76,6 +81,11 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
   ] = await Promise.all([
     import('../../src/app.controller'),
     import('../../src/app.service'),
+    import('../../src/analytics/analytics-cache.service'),
+    import('../../src/analytics/analytics.controller'),
+    import('../../src/analytics/analytics.service'),
+    import('../../src/analytics/dto/analytics-query.dto'),
+    import('../../src/analytics/dto/recommendation-preference.dto'),
     import('../../src/auth/auth.controller'),
     import('../../src/auth/auth-rate-limit.service'),
     import('../../src/auth/auth.repository'),
@@ -135,6 +145,13 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
   ]);
 
   defineConstructorTypes(AppController, [AppService, HealthService]);
+  defineConstructorTypes(AnalyticsCacheService, [Object, PrismaService]);
+  defineConstructorTypes(AnalyticsController, [
+    AnalyticsService,
+    AuthRateLimitService,
+    ConfigService,
+  ]);
+  defineConstructorTypes(AnalyticsService, [PrismaService, ConfigService, AnalyticsCacheService]);
   defineConstructorTypes(AuthController, [
     AuthService,
     GoogleOidcService,
@@ -148,6 +165,7 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     CheckinsService,
     AuthRateLimitService,
     ConfigService,
+    AnalyticsCacheService,
   ]);
   defineConstructorTypes(CheckinsRepository, [PrismaService, TicketSigningService, Object]);
   defineConstructorTypes(CheckinsService, [CheckinsRepository]);
@@ -202,7 +220,7 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
   defineConstructorTypes(RsvpPromotionProcessor, [RsvpsRepository]);
   defineConstructorTypes(RsvpsController, [RsvpsService, AuthRateLimitService, ConfigService]);
   defineConstructorTypes(RsvpsRepository, [PrismaService, TicketSigningService]);
-  defineConstructorTypes(RsvpsService, [RsvpsRepository]);
+  defineConstructorTypes(RsvpsService, [RsvpsRepository, AnalyticsCacheService]);
   defineConstructorTypes(TicketSigningService, [ConfigService]);
   defineConstructorTypes(VenueBookingsRepository, [PrismaService]);
   defineConstructorTypes(VenueBookingsService, [VenueBookingsRepository, ConfigService]);
@@ -231,6 +249,18 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
   defineMethodTypes(EventsController, 'createImageUpload', [Object, String, CreateImageUploadDto]);
   defineMethodTypes(EventsController, 'confirmImageUpload', [Object, String]);
   defineMethodTypes(EventsController, 'getImage', [Object, String, Object]);
+  defineMethodTypes(AnalyticsController, 'eventAnalytics', [Object, String, AnalyticsQueryDto]);
+  defineMethodTypes(AnalyticsController, 'clubAnalytics', [Object, String, AnalyticsQueryDto]);
+  defineMethodTypes(AnalyticsController, 'exportAttendees', [Object, String, Object]);
+  defineMethodTypes(AnalyticsController, 'recommendations', [Object]);
+  defineMethodTypes(AnalyticsController, 'getRecommendationPreference', [Object]);
+  defineMethodTypes(AnalyticsController, 'updateRecommendationPreference', [
+    Object,
+    RecommendationPreferenceDto,
+  ]);
+  defineMethodTypes(AnalyticsController, 'deleteRecommendationData', [Object]);
+  defineMethodTypes(AnalyticsController, 'followClub', [Object, String]);
+  defineMethodTypes(AnalyticsController, 'unfollowClub', [Object, String]);
   defineMethodTypes(VenuesController, 'list', []);
   defineMethodTypes(VenuesController, 'get', [Object, String]);
   defineMethodTypes(VenuesController, 'checkConflicts', [Object, CheckVenueConflictsDto]);

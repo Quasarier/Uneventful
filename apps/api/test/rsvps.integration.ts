@@ -46,6 +46,9 @@ import { EventDashboardRepository } from '../src/realtime/event-dashboard.reposi
 import { RealtimeIoAdapter } from '../src/realtime/realtime-io.adapter';
 import { validateEnvironment, type Environment } from '../src/config/environment';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AnalyticsCacheService } from '../src/analytics/analytics-cache.service';
+import { AnalyticsController } from '../src/analytics/analytics.controller';
+import { AnalyticsService } from '../src/analytics/analytics.service';
 
 const appDatabaseUrl = process.env.TEST_DATABASE_URL;
 const migrationDatabaseUrl = process.env.TEST_MIGRATION_DATABASE_URL;
@@ -127,6 +130,8 @@ let appPrisma: PrismaService;
 let migrationPrisma: PrismaService;
 let repository: RsvpsRepository;
 let rateLimitService: AuthRateLimitService;
+let redisClient: Redis;
+let analyticsCache: AnalyticsCacheService;
 let httpApp: INestApplication | undefined;
 let httpBaseUrl: string;
 let realtimeApps: INestApplication[] = [];
@@ -138,11 +143,41 @@ let realAuthRealtimeBaseUrl: string;
 const socketFamiliesByToken = new Map<string, string>();
 const activeSocketFamilies = new Set<string>();
 const socketTokenExpiries = new Map<string, number>();
+const eventAnalyticsResponseFields = [
+  'checkInsByTime',
+  'eventId',
+  'noShowRate',
+  'peakSignupHours',
+  'period',
+  'repeatAttendeeRate',
+  'rsvps',
+  'rsvpsOverTime',
+];
+const clubAnalyticsResponseFields = [
+  'checkInsByTime',
+  'clubId',
+  'followerGrowth',
+  'memberGrowth',
+  'noShowRate',
+  'peakSignupHours',
+  'period',
+  'repeatAttendeeRate',
+  'rsvps',
+  'rsvpsOverTime',
+];
 let publishDashboardCheckIn = async (eventId: string): Promise<void> => {
   if (!eventId) {
     throw new Error('Dashboard event ID is required.');
   }
 };
+
+function expectAnalyticsFieldAllowlist(value: unknown, fields: readonly string[]): void {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Analytics response must be a JSON object.');
+  }
+  expect(Object.keys(value).sort()).toEqual([...fields].sort());
+}
+
 let organizerId: string;
 let otherOrganizerId: string;
 let adminId: string;
@@ -154,6 +189,7 @@ let clubId: string;
 let otherClubId: string;
 let clubIds: string[] = [];
 let categoryId: string;
+let additionalCategoryIds: string[] = [];
 let startAt: Date;
 let endAt: Date;
 let activePrisma: PrismaService;
@@ -214,8 +250,13 @@ Reflect.defineMetadata(
 );
 Reflect.defineMetadata(
   'design:paramtypes',
-  [CheckinsService, AuthRateLimitService, ConfigService],
+  [CheckinsService, AuthRateLimitService, ConfigService, AnalyticsCacheService],
   CheckinsController,
+);
+Reflect.defineMetadata(
+  'design:paramtypes',
+  [AnalyticsService, AuthRateLimitService, ConfigService],
+  AnalyticsController,
 );
 Reflect.defineMetadata(
   'design:paramtypes',
@@ -283,8 +324,21 @@ const realtimeAuthStub = {
 };
 
 @Module({
-  controllers: [AuthController, RsvpsController, MyRsvpsController, CheckinsController],
+  controllers: [
+    AuthController,
+    RsvpsController,
+    MyRsvpsController,
+    CheckinsController,
+    AnalyticsController,
+  ],
   providers: [
+    { provide: AnalyticsCacheService, useFactory: () => analyticsCache },
+    {
+      provide: AnalyticsService,
+      useFactory: (config: ConfigService<Environment, true>) =>
+        new AnalyticsService(activePrisma, config, analyticsCache),
+      inject: [ConfigService],
+    },
     {
       provide: RsvpsRepository,
       useFactory: (ticketSigning: TicketSigningService) =>
@@ -293,7 +347,7 @@ const realtimeAuthStub = {
     },
     {
       provide: RsvpsService,
-      useFactory: (repo: RsvpsRepository) => new RsvpsService(repo),
+      useFactory: (repo: RsvpsRepository) => new RsvpsService(repo, analyticsCache),
       inject: [RsvpsRepository],
     },
     {
@@ -366,10 +420,11 @@ describe('RSVP PostgreSQL concurrency integration', () => {
     repository = new RsvpsRepository(appPrisma, ticketSigner);
     activePrisma = appPrisma;
 
-    const redis = new Redis(redisUrl!, { lazyConnect: true, maxRetriesPerRequest: 1 });
-    await redis.connect();
-    await redis.ping();
-    rateLimitService = new AuthRateLimitService(redis);
+    redisClient = new Redis(redisUrl!, { lazyConnect: true, maxRetriesPerRequest: 1 });
+    await redisClient.connect();
+    await redisClient.ping();
+    rateLimitService = new AuthRateLimitService(redisClient);
+    analyticsCache = new AnalyticsCacheService(redisClient, appPrisma);
 
     httpApp = await NestFactory.create(RsvpHttpIntegrationModule, { logger: false });
     httpApp.setGlobalPrefix('api/v1');
@@ -555,6 +610,7 @@ describe('RSVP PostgreSQL concurrency integration', () => {
     startAt = new Date(Date.now() + 60 * 60 * 1_000);
     endAt = new Date(startAt.getTime() + 2 * 60 * 60 * 1_000);
     eventIds = [];
+    additionalCategoryIds = [];
     primaryEventId = await createEvent(50);
   });
 
@@ -586,13 +642,31 @@ describe('RSVP PostgreSQL concurrency integration', () => {
         await migrationPrisma.ticket.deleteMany({ where: { rsvpId: { in: rsvpIds } } });
         await migrationPrisma.rsvp.deleteMany({ where: { id: { in: rsvpIds } } });
       }
+      await migrationPrisma.clubFollow.deleteMany({
+        where: { OR: [{ userId: { in: userIds } }, { clubId: { in: clubIds } }] },
+      });
+      await migrationPrisma.recommendationConsent.deleteMany({
+        where: { userId: { in: userIds } },
+      });
+      await migrationPrisma.recommendationPreference.deleteMany({
+        where: { userId: { in: userIds } },
+      });
       await migrationPrisma.event.deleteMany({ where: { id: { in: eventIds } } });
-      await migrationPrisma.eventCategory.deleteMany({ where: { id: categoryId } });
+      await migrationPrisma.eventCategory.deleteMany({
+        where: { id: { in: [categoryId, ...additionalCategoryIds] } },
+      });
       await migrationPrisma.clubMembership.deleteMany({ where: { clubId: { in: clubIds } } });
       await migrationPrisma.club.deleteMany({ where: { id: { in: clubIds } } });
+      const auditActors = await migrationPrisma.auditLog.findMany({
+        where: { actorId: { in: userIds } },
+        select: { actorId: true },
+      });
+      const preservedActorIds = auditActors.flatMap((audit) =>
+        audit.actorId ? [audit.actorId] : [],
+      );
       await migrationPrisma.user.deleteMany({
         where: {
-          id: { in: userIds, notIn: [adminId, organizerId] },
+          id: { in: userIds, notIn: [adminId, organizerId, ...preservedActorIds] },
         },
       });
     }
@@ -609,6 +683,650 @@ describe('RSVP PostgreSQL concurrency integration', () => {
     await httpApp?.close();
     rateLimitService?.onModuleDestroy();
     await Promise.all([appPrisma?.$disconnect(), migrationPrisma?.$disconnect()]);
+  });
+
+  it('masks analytics and attendee exports from anonymous, student, and other-club callers', async () => {
+    const eventPath = `/events/${primaryEventId}/analytics`;
+    const exportPath = `/events/${primaryEventId}/attendees/export`;
+    const eventResponses = await Promise.all([
+      fetch(`${httpBaseUrl}${eventPath}`),
+      requestAs(studentId(0), 'GET', eventPath),
+      requestAs(otherOrganizerId, 'GET', eventPath),
+      fetch(`${httpBaseUrl}${exportPath}`),
+      requestAs(studentId(0), 'GET', exportPath),
+      requestAs(otherOrganizerId, 'GET', exportPath),
+    ]);
+    const eventBodies = await Promise.all(eventResponses.map((response) => response.json()));
+
+    expect(eventResponses.map((response) => response.status)).toEqual([
+      404, 404, 404, 404, 404, 404,
+    ]);
+    expect(eventBodies.slice(1, 3)).toEqual([eventBodies[0], eventBodies[0]]);
+    expect(eventBodies.slice(4, 6)).toEqual([eventBodies[3], eventBodies[3]]);
+    expect(Object.keys(eventBodies[0]).sort()).toEqual(['code', 'message', 'path', 'statusCode']);
+    expect(eventBodies[0]).toMatchObject({
+      statusCode: 404,
+      code: 'NOT_FOUND',
+      message: 'Event not found.',
+      path: '/api/v1/events/:id/analytics',
+    });
+    expect(eventBodies[3]).toMatchObject({
+      statusCode: 404,
+      code: 'NOT_FOUND',
+      message: 'Event not found.',
+      path: '/api/v1/events/:id/attendees/export',
+    });
+
+    const clubPath = `/clubs/${clubId}/analytics`;
+    const clubResponses = await Promise.all([
+      fetch(`${httpBaseUrl}${clubPath}`),
+      requestAs(studentId(0), 'GET', clubPath),
+      requestAs(otherOrganizerId, 'GET', clubPath),
+      requestAs(otherOrganizerId, 'GET', `/clubs/${randomUUID()}/analytics`),
+    ]);
+    const clubBodies = await Promise.all(clubResponses.map((response) => response.json()));
+    expect(clubResponses.map((response) => response.status)).toEqual([404, 404, 404, 404]);
+    expect(clubBodies.slice(1)).toEqual([clubBodies[0], clubBodies[0], clubBodies[0]]);
+    expect(Object.keys(clubBodies[0]).sort()).toEqual(['code', 'message', 'path', 'statusCode']);
+    expect(clubBodies[0]).toMatchObject({
+      statusCode: 404,
+      code: 'NOT_FOUND',
+      message: 'Club not found.',
+      path: '/api/v1/clubs/:id/analytics',
+    });
+  });
+
+  it('rate-limits analytics and CSV export with Retry-After headers', async () => {
+    const analyticsPath = `/events/${primaryEventId}/analytics`;
+    const analyticsResponses: Response[] = [];
+    for (let index = 0; index < 21; index += 1) {
+      analyticsResponses.push(await requestAs(organizerId, 'GET', analyticsPath));
+    }
+    expect(analyticsResponses.slice(0, 20).every((response) => response.status === 200)).toBe(true);
+    expect(analyticsResponses[20]?.status).toBe(429);
+    expect(analyticsResponses[20]?.headers.get('retry-after')).toMatch(/^\d+$/);
+    for (const response of analyticsResponses.slice(0, 20)) {
+      expectAnalyticsFieldAllowlist(await response.clone().json(), eventAnalyticsResponseFields);
+    }
+
+    const exportResponses: Response[] = [];
+    for (let index = 0; index < 4; index += 1) {
+      exportResponses.push(
+        await requestAs(organizerId, 'GET', `/events/${primaryEventId}/attendees/export`),
+      );
+    }
+    expect(exportResponses.slice(0, 3).every((response) => response.status === 200)).toBe(true);
+    expect(exportResponses[3]?.status).toBe(429);
+    expect(exportResponses[3]?.headers.get('retry-after')).toMatch(/^\d+$/);
+  });
+
+  it('returns aggregate-only analytics with hand-checked counts and suppresses small values', async () => {
+    const now = new Date();
+    const statuses = [
+      ...Array.from({ length: 5 }, () => RsvpStatus.GOING),
+      ...Array.from({ length: 5 }, () => RsvpStatus.WAITLISTED),
+      ...Array.from({ length: 5 }, () => RsvpStatus.CANCELLED),
+      ...Array.from({ length: 10 }, () => RsvpStatus.CHECKED_IN),
+    ];
+    await appPrisma.rsvp.createMany({
+      data: statuses.map((status, index) => ({
+        eventId: primaryEventId,
+        userId: studentId(index),
+        status,
+        waitlistPosition: status === RsvpStatus.WAITLISTED ? index - 4 : null,
+        checkedInAt: status === RsvpStatus.CHECKED_IN ? now : null,
+        createdAt: now,
+      })),
+    });
+    await appPrisma.event.update({
+      where: { id: primaryEventId },
+      data: {
+        startAt: new Date(now.getTime() - 3 * 86_400_000),
+        endAt: new Date(now.getTime() - 2 * 86_400_000),
+      },
+    });
+    const repeatHistoryEventId = await createEvent(
+      50,
+      EventStatus.APPROVED,
+      new Date(now.getTime() - 6 * 86_400_000),
+      new Date(now.getTime() - 5 * 86_400_000),
+    );
+    await appPrisma.rsvp.createMany({
+      data: Array.from({ length: 5 }, (_value, index) => ({
+        eventId: repeatHistoryEventId,
+        userId: studentId(index + 15),
+        status: RsvpStatus.CHECKED_IN,
+        checkedInAt: new Date(now.getTime() - 5 * 86_400_000),
+        createdAt: now,
+      })),
+    });
+
+    const response = await requestAs(
+      organizerId,
+      'GET',
+      `/events/${primaryEventId}/analytics?from=${encodeURIComponent(
+        new Date(now.getTime() - 60_000).toISOString(),
+      )}&to=${encodeURIComponent(new Date(now.getTime() + 60_000).toISOString())}`,
+    );
+    const result: unknown = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
+    expectAnalyticsFieldAllowlist(result, eventAnalyticsResponseFields);
+    expect(result).toMatchObject({
+      eventId: primaryEventId,
+      rsvps: { going: 5, waitlisted: 5, cancelled: 5, checkedIn: 10 },
+      noShowRate: 33.33,
+      repeatAttendeeRate: 50,
+      rsvpsOverTime: [
+        {
+          total: 25,
+          going: 5,
+          waitlisted: 5,
+          cancelled: 5,
+          checkedIn: 10,
+        },
+      ],
+    });
+    const eventAnalyticsJson = JSON.stringify(result);
+    for (const [index, id] of studentIds.slice(0, 25).entries()) {
+      expect(eventAnalyticsJson).not.toContain(id);
+      expect(eventAnalyticsJson).not.toContain(`${id}@example.edu`);
+      expect(eventAnalyticsJson).not.toContain(`Student${index} Integration`);
+    }
+
+    const smallEventId = await createEvent(50);
+    await appPrisma.rsvp.createMany({
+      data: Array.from({ length: 4 }, (_value, index) => ({
+        eventId: smallEventId,
+        userId: studentId(index),
+        status: RsvpStatus.GOING,
+        createdAt: now,
+      })),
+    });
+    const smallResponse = await requestAs(
+      organizerId,
+      'GET',
+      `/events/${smallEventId}/analytics?from=${encodeURIComponent(
+        new Date(now.getTime() - 60_000).toISOString(),
+      )}&to=${encodeURIComponent(new Date(now.getTime() + 60_000).toISOString())}`,
+    );
+    const smallResult = await smallResponse.json();
+    expectAnalyticsFieldAllowlist(smallResult, eventAnalyticsResponseFields);
+    expect(smallResult).toMatchObject({
+      rsvps: { going: null },
+      rsvpsOverTime: [],
+    });
+
+    const clubResponse = await requestAs(
+      organizerId,
+      'GET',
+      `/clubs/${clubId}/analytics?from=${encodeURIComponent(
+        new Date(now.getTime() - 60_000).toISOString(),
+      )}&to=${encodeURIComponent(new Date(now.getTime() + 60_000).toISOString())}`,
+    );
+    const clubResult = await clubResponse.json();
+    expect(clubResponse.status).toBe(200);
+    expectAnalyticsFieldAllowlist(clubResult, clubAnalyticsResponseFields);
+    expect(clubResult).toMatchObject({
+      clubId,
+      rsvps: { going: 9, waitlisted: 5, cancelled: 5, checkedIn: 15 },
+      noShowRate: 25,
+      repeatAttendeeRate: 50,
+      rsvpsOverTime: [
+        {
+          total: 34,
+          going: 9,
+          waitlisted: 5,
+          cancelled: 5,
+          checkedIn: 15,
+        },
+      ],
+    });
+    const clubAnalyticsJson = JSON.stringify(clubResult);
+    for (const [index, id] of studentIds.slice(0, 25).entries()) {
+      expect(clubAnalyticsJson).not.toContain(id);
+      expect(clubAnalyticsJson).not.toContain(`${id}@example.edu`);
+      expect(clubAnalyticsJson).not.toContain(`Student${index} Integration`);
+    }
+  });
+
+  it('invalidates event analytics cache after successful check-ins', async () => {
+    const now = new Date();
+    const analyticsPath = `/events/${primaryEventId}/analytics?from=${encodeURIComponent(
+      new Date(now.getTime() - 60_000).toISOString(),
+    )}&to=${encodeURIComponent(new Date(now.getTime() + 60_000).toISOString())}`;
+    const scanTickets = await Promise.all(
+      Array.from({ length: 5 }, (_value, index) =>
+        createRsvpWithTicket(primaryEventId, studentId(index)),
+      ),
+    );
+    const before = await requestAs(organizerId, 'GET', analyticsPath);
+    const beforeBody = await before.json();
+    expectAnalyticsFieldAllowlist(beforeBody, eventAnalyticsResponseFields);
+    expect(beforeBody).toMatchObject({ rsvps: { checkedIn: null } });
+
+    for (const ticket of scanTickets) {
+      const response = await requestAs(organizerId, 'POST', `/events/${primaryEventId}/checkins`, {
+        ticket: ticket.ticketToken,
+        deviceId: randomUUID(),
+      });
+      expect(response.status).toBe(201);
+      expect(await response.json()).toMatchObject({ status: 'VALID' });
+    }
+
+    const after = await requestAs(organizerId, 'GET', analyticsPath);
+    const afterBody = await after.json();
+    expectAnalyticsFieldAllowlist(afterBody, eventAnalyticsResponseFields);
+    expect(afterBody).toMatchObject({
+      rsvps: { checkedIn: 5 },
+      checkInsByTime: [{ count: 5 }],
+    });
+  });
+
+  it('scopes analytics cache keys to their club and event', async () => {
+    const now = new Date();
+    const from = new Date(now.getTime() - 60_000).toISOString();
+    const to = new Date(now.getTime() + 60_000).toISOString();
+    const range = `?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+
+    const firstClubResponse = await requestAs(
+      organizerId,
+      'GET',
+      `/clubs/${clubId}/analytics${range}`,
+    );
+    const secondClubResponse = await requestAs(
+      otherOrganizerId,
+      'GET',
+      `/clubs/${otherClubId}/analytics${range}`,
+    );
+    expect(firstClubResponse.status).toBe(200);
+    expect(secondClubResponse.status).toBe(200);
+    expectAnalyticsFieldAllowlist(await firstClubResponse.json(), clubAnalyticsResponseFields);
+    expectAnalyticsFieldAllowlist(await secondClubResponse.json(), clubAnalyticsResponseFields);
+
+    const firstClubKeys = await redisClient.smembers(`analytics:club:index:${clubId}`);
+    const secondClubKeys = await redisClient.smembers(`analytics:club:index:${otherClubId}`);
+    expect(firstClubKeys).toEqual([`analytics:club:${clubId}:${from}:${to}:day`]);
+    expect(secondClubKeys).toEqual([`analytics:club:${otherClubId}:${from}:${to}:day`]);
+    expect(firstClubKeys.filter((key) => secondClubKeys.includes(key))).toEqual([]);
+
+    const secondEventId = await createEvent(
+      50,
+      EventStatus.APPROVED,
+      startAt,
+      endAt,
+      true,
+      otherClubId,
+    );
+    const firstEventResponse = await requestAs(
+      organizerId,
+      'GET',
+      `/events/${primaryEventId}/analytics${range}`,
+    );
+    const secondEventResponse = await requestAs(
+      otherOrganizerId,
+      'GET',
+      `/events/${secondEventId}/analytics${range}`,
+    );
+    expect(firstEventResponse.status).toBe(200);
+    expect(secondEventResponse.status).toBe(200);
+    expectAnalyticsFieldAllowlist(await firstEventResponse.json(), eventAnalyticsResponseFields);
+    expectAnalyticsFieldAllowlist(await secondEventResponse.json(), eventAnalyticsResponseFields);
+
+    const firstEventKeys = await redisClient.smembers(`analytics:event:index:${primaryEventId}`);
+    const secondEventKeys = await redisClient.smembers(`analytics:event:index:${secondEventId}`);
+    expect(firstEventKeys).toEqual([
+      `analytics:event:${clubId}:${primaryEventId}:${from}:${to}:day`,
+    ]);
+    expect(secondEventKeys).toEqual([
+      `analytics:event:${otherClubId}:${secondEventId}:${from}:${to}:day`,
+    ]);
+    expect(firstEventKeys.filter((key) => secondEventKeys.includes(key))).toEqual([]);
+  });
+
+  it('streams a privacy-limited CSV with formula-safe cells and records the export audit', async () => {
+    const hostileNames = [
+      { firstName: '=HYPERLINK("https://bad.example")', lastName: 'Attendee,\r\nName' },
+      { firstName: '+1+1', lastName: 'Fixture 1' },
+      { firstName: '-1+1', lastName: 'Fixture 2' },
+      { firstName: '@SUM(A1:A1)', lastName: 'Fixture 3' },
+      { firstName: '\t1+1', lastName: 'Fixture 4' },
+      { firstName: '\r1+1', lastName: 'Fixture 5' },
+    ];
+    await Promise.all([
+      ...hostileNames.map((name, index) =>
+        appPrisma.user.update({
+          where: { id: studentId(index) },
+          data: name,
+        }),
+      ),
+      appPrisma.event.update({
+        where: { id: primaryEventId },
+        data: { slug: '../../Campus: Events\r\n' },
+      }),
+    ]);
+    const storedNames = await Promise.all(
+      hostileNames.map((_name, index) =>
+        appPrisma.user.findUniqueOrThrow({
+          where: { id: studentId(index) },
+          select: { firstName: true, lastName: true },
+        }),
+      ),
+    );
+    expect(storedNames).toEqual(hostileNames);
+    await Promise.all(
+      hostileNames.map((_name, index) => createRsvpWithTicket(primaryEventId, studentId(index))),
+    );
+    const response = await requestAs(
+      organizerId,
+      'GET',
+      `/events/${primaryEventId}/attendees/export`,
+    );
+    const csv = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('text/csv; charset=utf-8');
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(response.headers.get('content-disposition')).toContain('event-Campus-Events.csv');
+    expect(csv).toContain('"\'=HYPERLINK(""https://bad.example"") Attendee, Name","GOING",""');
+    expect(csv).toContain('"\'+1+1 Fixture 1","GOING",""');
+    expect(csv).toContain('"\'-1+1 Fixture 2","GOING",""');
+    expect(csv).toContain('"\'@SUM(A1:A1) Fixture 3","GOING",""');
+    expect(csv).toContain(`"'\t1+1 Fixture 4","GOING",""`);
+    expect(csv).toContain(`"' 1+1 Fixture 5","GOING",""`);
+    for (const id of studentIds.slice(0, hostileNames.length)) {
+      expect(csv).not.toContain(id);
+    }
+    const audit = await appPrisma.auditLog.findFirstOrThrow({
+      where: {
+        actorId: organizerId,
+        action: 'EVENT_ATTENDEES_EXPORTED',
+        entityId: primaryEventId,
+      },
+    });
+    expect(audit.metadata).toMatchObject({ rowCount: hostileNames.length });
+  });
+
+  it('rejects attendee exports above the hard row cap', async () => {
+    const additionalUserIds = Array.from({ length: 2_001 - studentIds.length }, () => randomUUID());
+    userIds.push(...additionalUserIds);
+    await appPrisma.user.createMany({
+      data: additionalUserIds.map((id) => ({
+        id,
+        email: `${id}@example.edu`,
+        googleSubject: id,
+        firstName: 'Export',
+        lastName: 'Fixture',
+        role: 'STUDENT',
+      })),
+    });
+    await appPrisma.rsvp.createMany({
+      data: [...studentIds, ...additionalUserIds].map((userId) => ({
+        eventId: primaryEventId,
+        userId,
+        status: RsvpStatus.GOING,
+      })),
+    });
+
+    const response = await requestAs(
+      organizerId,
+      'GET',
+      `/events/${primaryEventId}/attendees/export`,
+    );
+
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({ statusCode: 413 });
+    expect(
+      await appPrisma.auditLog.findFirst({
+        where: {
+          actorId: organizerId,
+          action: 'EVENT_ATTENDEES_EXPORTED',
+          entityId: primaryEventId,
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it('enforces collaborative support, hides student identities in reasons, and skips opt-out history', async () => {
+    const now = new Date();
+    const otherCategoryId = randomUUID();
+    additionalCategoryIds.push(otherCategoryId);
+    await appPrisma.eventCategory.create({
+      data: {
+        id: otherCategoryId,
+        name: `Recommendation Category ${otherCategoryId}`,
+        slug: `recommendation-category-${otherCategoryId}`,
+      },
+    });
+
+    const pastEventId = await createEvent(
+      50,
+      EventStatus.APPROVED,
+      new Date(now.getTime() - 3 * 86_400_000),
+      new Date(now.getTime() - 2 * 86_400_000),
+    );
+    await appPrisma.event.update({
+      where: { id: pastEventId },
+      data: { title: 'Private attendance history', tags: ['past-topic'] },
+    });
+    await appPrisma.user.update({
+      where: { id: studentId(10) },
+      data: { firstName: 'SecretCollaborator', lastName: 'Identity' },
+    });
+    await appPrisma.rsvp.create({
+      data: {
+        eventId: pastEventId,
+        userId: studentId(0),
+        status: RsvpStatus.CHECKED_IN,
+        checkedInAt: new Date(now.getTime() - 2 * 86_400_000),
+      },
+    });
+
+    const collaborativeCandidateId = await createEvent(50);
+    const belowSupportCandidateId = await createEvent(50);
+    const popularityCandidateId = await createEvent(200);
+    await appPrisma.event.updateMany({
+      where: {
+        id: {
+          in: [collaborativeCandidateId, belowSupportCandidateId, popularityCandidateId],
+        },
+      },
+      data: { categoryId: otherCategoryId, tags: [] },
+    });
+    await appPrisma.rsvp.createMany({
+      data: Array.from({ length: 5 }, (_value, index) => {
+        const attendeeId = studentId(index + 10);
+        return [
+          {
+            eventId: pastEventId,
+            userId: attendeeId,
+            status: RsvpStatus.CHECKED_IN,
+            checkedInAt: new Date(now.getTime() - 2 * 86_400_000),
+          },
+          {
+            eventId: collaborativeCandidateId,
+            userId: attendeeId,
+            status: RsvpStatus.GOING,
+          },
+        ];
+      }).flat(),
+    });
+    await appPrisma.rsvp.createMany({
+      data: Array.from({ length: 4 }, (_value, index) => ({
+        eventId: belowSupportCandidateId,
+        userId: studentId(index + 10),
+        status: RsvpStatus.GOING,
+      })),
+    });
+    await appPrisma.rsvp.createMany({
+      data: Array.from({ length: 100 }, (_value, index) => ({
+        eventId: popularityCandidateId,
+        userId: studentId(index + 50),
+        status: RsvpStatus.GOING,
+      })),
+    });
+
+    const preferredCandidateId = await createEvent(50);
+    await appPrisma.event.update({
+      where: { id: preferredCandidateId },
+      data: {
+        title: 'Tag-matched upcoming event',
+        categoryId: otherCategoryId,
+        tags: ['upcoming-topic'],
+      },
+    });
+    const alreadyRsvpedId = await createEvent(50);
+    await appPrisma.event.update({
+      where: { id: alreadyRsvpedId },
+      data: { categoryId: otherCategoryId },
+    });
+    await appPrisma.rsvp.create({
+      data: {
+        eventId: alreadyRsvpedId,
+        userId: studentId(0),
+        status: RsvpStatus.GOING,
+      },
+    });
+    const cancelledId = await createEvent(50, EventStatus.CANCELLED);
+    const pastCandidateId = await createEvent(
+      50,
+      EventStatus.APPROVED,
+      new Date(now.getTime() - 3 * 86_400_000),
+      new Date(now.getTime() - 2 * 86_400_000),
+    );
+    const hiddenId = await createEvent(
+      50,
+      EventStatus.APPROVED,
+      startAt,
+      endAt,
+      false,
+      otherClubId,
+    );
+
+    const personalizedResponse = await requestAs(studentId(0), 'GET', '/recommendations');
+    expect(personalizedResponse.status, await personalizedResponse.clone().text()).toBe(200);
+    const personalized: {
+      data: Array<{ event: { id: string }; reason: string }>;
+      personalized: boolean;
+    } = await personalizedResponse.json();
+    const personalizedIds = personalized.data.map(({ event }) => event.id);
+    expect(personalized.personalized).toBe(true);
+    expect(personalizedIds).toContain(preferredCandidateId);
+    expect(personalizedIds.indexOf(collaborativeCandidateId)).toBeLessThan(
+      personalizedIds.indexOf(popularityCandidateId),
+    );
+    expect(personalizedIds.indexOf(popularityCandidateId)).toBeLessThan(
+      personalizedIds.indexOf(belowSupportCandidateId),
+    );
+    expect(personalizedIds).not.toContain(alreadyRsvpedId);
+    expect(personalizedIds).not.toContain(cancelledId);
+    expect(personalizedIds).not.toContain(pastCandidateId);
+    expect(personalizedIds).not.toContain(hiddenId);
+    expect(personalized.data.find(({ event }) => event.id === primaryEventId)?.reason).toBe(
+      'Because you attended Private attendance history',
+    );
+    const personalizedJson = JSON.stringify(personalized);
+    expect(personalizedJson).not.toContain('SecretCollaborator Identity');
+    expect(personalizedJson).not.toContain(`${studentId(10)}@example.edu`);
+
+    const recommendationIndex = `recommendations:user:index:${studentId(0)}`;
+    const cachedRecommendationKeys = await redisClient.smembers(recommendationIndex);
+    expect(cachedRecommendationKeys.length).toBeGreaterThan(0);
+    const optOutResponse = await requestAs(studentId(0), 'PATCH', '/me/recommendation-preference', {
+      personalized: false,
+    });
+    expect(optOutResponse.status).toBe(200);
+    expect(
+      await Promise.all(cachedRecommendationKeys.map((key) => redisClient.exists(key))),
+    ).toEqual(cachedRecommendationKeys.map(() => 0));
+    expect(await redisClient.smembers(recommendationIndex)).toEqual([]);
+    const historyReadSpy = vi.spyOn(appPrisma.rsvp, 'findMany');
+    const rawQuerySpy = vi.spyOn(appPrisma, '$queryRaw');
+    try {
+      const optedOutResponse = await requestAs(studentId(0), 'GET', '/recommendations');
+      const optedOut: {
+        data: Array<{ event: { id: string }; reason: string }>;
+        personalized: boolean;
+      } = await optedOutResponse.json();
+      expect(optedOut.personalized).toBe(false);
+      expect(
+        optedOut.data.every(({ reason }) => !reason.includes('Private attendance history')),
+      ).toBe(true);
+      expect(historyReadSpy).not.toHaveBeenCalled();
+      expect(rawQuerySpy.mock.calls.map(([template]) => String(template)).join('\n')).not.toContain(
+        'WITH attended AS',
+      );
+    } finally {
+      historyReadSpy.mockRestore();
+      rawQuerySpy.mockRestore();
+    }
+    expect(
+      await appPrisma.recommendationConsent.findFirst({
+        where: { userId: studentId(0), action: 'OPTED_OUT' },
+      }),
+    ).toMatchObject({ source: 'settings' });
+    expect(
+      await appPrisma.auditLog.findFirst({
+        where: { actorId: studentId(0), action: 'RECOMMENDATION_PREFERENCE_UPDATED' },
+      }),
+    ).not.toBeNull();
+
+    const followingResponse = await requestAs(studentId(1), 'GET', '/recommendations');
+    expect(followingResponse.status).toBe(200);
+    const followResponse = await requestAs(studentId(1), 'POST', `/clubs/${clubId}/follow`);
+    expect(followResponse.status).toBe(201);
+    const followedRecommendations = await requestAs(studentId(1), 'GET', '/recommendations');
+    const followed: { data: Array<{ event: { id: string }; reason: string }> } =
+      await followedRecommendations.json();
+    expect(followed.data.find(({ event }) => event.id === preferredCandidateId)?.reason).toBe(
+      'Popular in clubs you follow',
+    );
+
+    const beforeRsvp = await requestAs(studentId(2), 'GET', '/recommendations');
+    const beforeRsvpData: { data: Array<{ event: { id: string } }> } = await beforeRsvp.json();
+    expect(beforeRsvpData.data.map(({ event }) => event.id)).toContain(preferredCandidateId);
+    expect(
+      (await requestAs(studentId(2), 'POST', `/events/${preferredCandidateId}/rsvp`, {})).status,
+    ).toBe(201);
+    const afterRsvp = await requestAs(studentId(2), 'GET', '/recommendations');
+    const afterRsvpData: { data: Array<{ event: { id: string } }> } = await afterRsvp.json();
+    expect(afterRsvpData.data.map(({ event }) => event.id)).not.toContain(preferredCandidateId);
+
+    const cancellationCandidateId = await createEvent(50);
+    const initialForCancellation = await requestAs(studentId(3), 'GET', '/recommendations');
+    const initialForCancellationData: { data: Array<{ event: { id: string } }> } =
+      await initialForCancellation.json();
+    expect(initialForCancellationData.data.map(({ event }) => event.id)).toContain(
+      cancellationCandidateId,
+    );
+    expect(
+      (await requestAs(studentId(3), 'POST', `/events/${cancellationCandidateId}/rsvp`, {})).status,
+    ).toBe(201);
+    const afterConfirmation = await requestAs(studentId(3), 'GET', '/recommendations');
+    const afterConfirmationData: { data: Array<{ event: { id: string } }> } =
+      await afterConfirmation.json();
+    expect(afterConfirmationData.data.map(({ event }) => event.id)).not.toContain(
+      cancellationCandidateId,
+    );
+    expect(
+      (await requestAs(studentId(3), 'DELETE', `/events/${cancellationCandidateId}/rsvp`)).status,
+    ).toBe(200);
+    const afterCancellation = await requestAs(studentId(3), 'GET', '/recommendations');
+    const afterCancellationData: { data: Array<{ event: { id: string } }> } =
+      await afterCancellation.json();
+    expect(afterCancellationData.data.map(({ event }) => event.id)).toContain(
+      cancellationCandidateId,
+    );
+
+    expect(await requestAs(studentId(0), 'DELETE', '/me/recommendation-data')).toMatchObject({
+      status: 200,
+    });
+    expect(
+      await appPrisma.auditLog.findFirst({
+        where: { actorId: studentId(0), action: 'RECOMMENDATION_DATA_DELETED' },
+      }),
+    ).not.toBeNull();
   });
 
   it('issues signed ticket IDs and does not reset a USED ticket during regeneration', async () => {
@@ -2463,7 +3181,7 @@ function expectNoSocketEvent(
 
 function requestAs(
   userId: string,
-  method: 'GET' | 'POST' | 'DELETE',
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
   path: string,
   body?: unknown,
 ): Promise<Response> {
