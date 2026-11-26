@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '@/components/auth-provider';
 import { createApiClient, errorMessage } from '@/lib/api-client';
 import type { UserProfile as ProfileData } from '@/lib/event-format';
+import { RecommendationSettings } from '@/components/recommendations';
 
 export function Profile() {
   const { accessToken } = useAuth();
@@ -75,6 +76,7 @@ export function Profile() {
           >
             {initials}
           </div>
+          <RecommendationSettings />
           <div>
             <h2 className="font-display text-2xl font-bold">
               {profile.firstName} {profile.lastName}

@@ -162,6 +162,40 @@ The club directory is derived from public event data, so it lists clubs with dis
 
 The web app requires `NEXT_PUBLIC_WEB_ORIGIN` and `NEXT_PUBLIC_API_BASE_URL` to match the configured deployment origins. In local development, set them to `http://localhost:3000` and `http://localhost:3001/api/v1`, respectively; OAuth refresh cookies remain Secure and should be tested in a browser context that can use those cookie settings.
 
+## Organizer analytics and recommendations
+
+Organizers with active membership in an event's club and administrators can
+view event and club analytics. The API returns SQL aggregates only; it never
+returns a student's individual attendance history. Counts and date buckets
+smaller than `ANALYTICS_MIN_GROUP_SIZE` (default 5) are suppressed, including
+complementary values used for percentage calculations. Date ranges are capped
+at 90 days and 100 buckets. Peak signup hours and calendar buckets use the
+validated `CAMPUS_TIME_ZONE`. Analytics responses are private/no-store and
+short-lived server caches are scoped by event/club; RSVP, cancellation, and
+check-in changes invalidate the affected scopes.
+
+Attendee CSV exports contain display name, RSVP status, and check-in time only,
+are limited to 2,000 rows, audited, and rate-limited. Cells are escaped as
+RFC 4180 CSV and spreadsheet formula prefixes are neutralized. Exports use
+UTF-8 with a BOM to improve spreadsheet compatibility; embedded line breaks
+are replaced with spaces. The response has a sanitized filename and
+`X-Content-Type-Options: nosniff`.
+
+Student recommendations default to personalized, using the student's own
+previous attendance and followed clubs; co-attendance signals are used only
+when at least `RECOMMENDATIONS_MIN_SUPPORT` distinct students support them
+(default 5). Recommendations exclude hidden, private-for-nonmembers, past,
+cancelled, and already-RSVPed events. Reasons refer only to the student's own
+attendance or followed clubs, never another student's activity. Students can
+opt out in Profile settings and request deletion of derived recommendation
+cache data. Preference changes are timestamped, audited, and recorded as
+consent. Opted-out recommendations do not query or score attendance history.
+
+Run `corepack pnpm --filter @uneventful/api recommendations:evaluate` for the
+fixed-seed synthetic precision@5 and coverage smoke evaluation. The evaluation
+is useful for checking ranking changes are deterministic, but its synthetic
+dataset is not a measure of real-world recommendation quality or fairness.
+
 ## Verification
 
 ```powershell

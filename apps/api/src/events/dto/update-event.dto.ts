@@ -1,5 +1,8 @@
 import {
   IsBoolean,
+  IsArray,
+  ArrayMaxSize,
+  ArrayUnique,
   IsDateString,
   IsInt,
   IsString,
@@ -23,6 +26,15 @@ export class UpdateEventDto {
   @Length(1, 20_000)
   @Matches(/\S/)
   description?: string;
+
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ArrayUnique()
+  @IsString({ each: true })
+  @Length(1, 48, { each: true })
+  @Matches(/\S/, { each: true })
+  tags?: string[];
 
   @ValidateIf((_object, value) => value !== undefined)
   @IsDateString({ strict: true })

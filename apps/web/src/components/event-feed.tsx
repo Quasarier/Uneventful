@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { EventCard } from '@/components/event-card';
+import { RecommendedEvents } from '@/components/recommendations';
 import { useAuth } from '@/components/auth-provider';
 import { createApiClient, errorMessage } from '@/lib/api-client';
 import type { EventItem } from '@/lib/event-format';
@@ -170,6 +171,8 @@ export function EventFeed({
         </h1>
         <p className="mt-4 text-base leading-7 text-ink/70">{description}</p>
       </div>
+
+      <RecommendedEvents />
 
       <form
         aria-label="Filter events"

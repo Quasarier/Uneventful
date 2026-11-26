@@ -24,6 +24,8 @@ export function EventDetail({ eventId }: Readonly<{ eventId: string }>) {
   const [checkConflicts, setCheckConflicts] = useState(false);
   const [error, setError] = useState('');
   const [statusError, setStatusError] = useState('');
+  const [followingClub, setFollowingClub] = useState(false);
+  const [followError, setFollowError] = useState('');
 
   const load = useCallback(async () => {
     if (!accessToken) return;
@@ -54,8 +56,10 @@ export function EventDetail({ eventId }: Readonly<{ eventId: string }>) {
   }, [accessToken, eventId]);
 
   useEffect(() => {
+    setFollowingClub(false);
+    setFollowError('');
     void load();
-  }, [load]);
+  }, [eventId, load]);
 
   async function submitRsvp() {
     if (!accessToken || !rsvp) return;
@@ -124,6 +128,23 @@ export function EventDetail({ eventId }: Readonly<{ eventId: string }>) {
     }
   }
 
+  async function followClub(clubId: string) {
+    if (!accessToken) return;
+    setFollowError('');
+    try {
+      const { error: responseError, response } = await createApiClient(accessToken).POST(
+        '/clubs/{id}/follow',
+        { params: { path: { id: clubId } } },
+      );
+      if (!response.ok) {
+        throw new Error(errorMessage(responseError, 'The club could not be followed.'));
+      }
+      setFollowingClub(true);
+    } catch (reason) {
+      setFollowError(reason instanceof Error ? reason.message : 'The club could not be followed.');
+    }
+  }
+
   if (loading) {
     return (
       <p aria-live="polite" className="py-12 font-semibold text-forest" role="status">
@@ -179,10 +200,35 @@ export function EventDetail({ eventId }: Readonly<{ eventId: string }>) {
           Open live dashboard
         </Link>
       )}
+      {(userRole === 'ORGANIZER' || userRole === 'ADMIN') && (
+        <Link
+          className="ml-5 text-sm font-bold text-forest underline underline-offset-4"
+          href={`/events/${eventId}/analytics`}
+        >
+          View event analytics
+        </Link>
+      )}
       <header className="mt-6 rounded-[2rem] bg-forest p-7 text-white sm:p-10">
         <p className="text-sm font-bold text-mint">
           {event.category.name} · {event.club.name}
         </p>
+        {userRole === 'STUDENT' && (
+          <div className="mt-3">
+            <button
+              className="rounded-full border border-white/40 px-4 py-2 text-sm font-bold text-white disabled:opacity-60"
+              disabled={followingClub}
+              onClick={() => void followClub(event.clubId)}
+              type="button"
+            >
+              {followingClub ? 'Following this club' : 'Follow this club'}
+            </button>
+            {followError && (
+              <p className="mt-2 text-sm text-white" role="alert">
+                {followError}
+              </p>
+            )}
+          </div>
+        )}
         <h1 className="font-display mt-4 text-4xl font-black tracking-tight sm:text-6xl">
           {event.title}
         </h1>

@@ -17,6 +17,7 @@ import { RsvpsRepository } from './rsvps.repository';
 import { RsvpsService } from './rsvps.service';
 import { TicketSigningService } from './ticket-signing.service';
 import { EventDashboardModule } from '../realtime/event-dashboard.module';
+import { AnalyticsModule } from '../analytics/analytics.module';
 
 function redisConnection(redisUrl: string) {
   const url = new URL(redisUrl);
@@ -36,6 +37,7 @@ function redisConnection(redisUrl: string) {
   imports: [
     AppConfigModule,
     EventDashboardModule,
+    AnalyticsModule,
     AuthRateLimitModule,
     DatabaseModule,
     BullModule.forRootAsync({

@@ -393,6 +393,127 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/events/{id}/analytics': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get privacy-suppressed aggregate analytics for an event */
+    get: operations['getEventAnalytics'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/clubs/{id}/analytics': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get privacy-suppressed aggregate analytics for a club */
+    get: operations['getClubAnalytics'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/events/{id}/attendees/export': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Stream a capped attendee CSV for an event */
+    get: operations['exportEventAttendees'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/recommendations': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get personalized or popular upcoming event recommendations */
+    get: operations['getRecommendations'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/me/recommendation-preference': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get the authenticated user's personalization setting */
+    get: operations['getRecommendationPreference'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /** Update personalization preference and record consent */
+    patch: operations['updateRecommendationPreference'];
+    trace?: never;
+  };
+  '/me/recommendation-data': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Delete derived recommendation cache data for the current user */
+    delete: operations['deleteRecommendationData'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/clubs/{id}/follow': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Follow a club for recommendations */
+    post: operations['followClub'];
+    /** Unfollow a club */
+    delete: operations['unfollowClub'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -401,6 +522,85 @@ export interface components {
       statusCode: number;
       message: string | string[];
       error?: string;
+    };
+    AnalyticsPeriod: {
+      /** Format: date-time */
+      from: string;
+      /** Format: date-time */
+      to: string;
+      /** @enum {string} */
+      bucket: 'day' | 'week';
+    };
+    AnalyticsRsvpCounts: {
+      going: number | null;
+      waitlisted: number | null;
+      cancelled: number | null;
+      checkedIn: number | null;
+    };
+    AnalyticsTrend: {
+      /** Format: date-time */
+      bucket: string;
+      total: number | null;
+      going: number | null;
+      waitlisted: number | null;
+      cancelled: number | null;
+      checkedIn: number | null;
+    };
+    AnalyticsBucketCount: {
+      /** Format: date-time */
+      bucket: string;
+      count: number;
+    };
+    AnalyticsPeakSignupHour: {
+      hour: number;
+      signups: number;
+    };
+    EventAnalytics: {
+      /** Format: uuid */
+      eventId: string;
+      period: components['schemas']['AnalyticsPeriod'];
+      rsvps: components['schemas']['AnalyticsRsvpCounts'];
+      noShowRate: number | null;
+      repeatAttendeeRate: number | null;
+      rsvpsOverTime: components['schemas']['AnalyticsTrend'][];
+      checkInsByTime: components['schemas']['AnalyticsBucketCount'][];
+      peakSignupHours: components['schemas']['AnalyticsPeakSignupHour'][];
+    };
+    ClubAnalytics: {
+      /** Format: uuid */
+      clubId: string;
+      period: components['schemas']['AnalyticsPeriod'];
+      rsvps: components['schemas']['AnalyticsRsvpCounts'];
+      noShowRate: number | null;
+      repeatAttendeeRate: number | null;
+      rsvpsOverTime: components['schemas']['AnalyticsTrend'][];
+      checkInsByTime: components['schemas']['AnalyticsBucketCount'][];
+      peakSignupHours: components['schemas']['AnalyticsPeakSignupHour'][];
+      followerGrowth: components['schemas']['AnalyticsBucketCount'][];
+      memberGrowth: components['schemas']['AnalyticsBucketCount'][];
+    };
+    RecommendationEvent: {
+      /** Format: uuid */
+      id: string;
+      title: string;
+      slug: string;
+      /** Format: date-time */
+      startAt: string;
+      /** Format: date-time */
+      endAt: string;
+      club: components['schemas']['EventClub'];
+      category: components['schemas']['EventCategory'];
+    };
+    Recommendation: {
+      event: components['schemas']['RecommendationEvent'];
+      reason: string;
+    };
+    Recommendations: {
+      data: components['schemas']['Recommendation'][];
+      personalized: boolean;
+    };
+    RecommendationPreference: {
+      personalized: boolean;
     };
     Session: {
       accessToken: string;
@@ -521,6 +721,7 @@ export interface components {
     CreateEventRequest: {
       title: string;
       description: string;
+      tags?: string[];
       /** Format: date-time */
       startAt: string;
       /** Format: date-time */
@@ -539,6 +740,7 @@ export interface components {
     UpdateEventRequest: {
       title?: string;
       description?: string;
+      tags?: string[];
       /** Format: date-time */
       startAt?: string;
       /** Format: date-time */
@@ -609,6 +811,7 @@ export interface components {
       title: string;
       slug: string;
       description: string;
+      tags: string[];
       /** @enum {string} */
       status: 'DRAFT' | 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
       /** Format: date-time */
@@ -818,7 +1021,11 @@ export interface components {
   };
   parameters: {
     EventId: string;
+    ClubId: string;
     VenueId: string;
+    AnalyticsFrom: string;
+    AnalyticsTo: string;
+    AnalyticsBucket: 'day' | 'week';
   };
   requestBodies: never;
   headers: never;
@@ -1618,6 +1825,224 @@ export interface operations {
         };
       };
       401: components['responses']['Error'];
+    };
+  };
+  getEventAnalytics: {
+    parameters: {
+      query?: {
+        from?: components['parameters']['AnalyticsFrom'];
+        to?: components['parameters']['AnalyticsTo'];
+        bucket?: components['parameters']['AnalyticsBucket'];
+      };
+      header?: never;
+      path: {
+        id: components['parameters']['EventId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Aggregate counts and trends with groups smaller than five suppressed. */
+      200: {
+        headers: {
+          'Cache-Control'?: 'private, no-store';
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['EventAnalytics'];
+        };
+      };
+      404: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  getClubAnalytics: {
+    parameters: {
+      query?: {
+        from?: components['parameters']['AnalyticsFrom'];
+        to?: components['parameters']['AnalyticsTo'];
+        bucket?: components['parameters']['AnalyticsBucket'];
+      };
+      header?: never;
+      path: {
+        id: components['parameters']['ClubId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Club aggregate counts and trends with small groups suppressed. */
+      200: {
+        headers: {
+          'Cache-Control'?: 'private, no-store';
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ClubAnalytics'];
+        };
+      };
+      404: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  exportEventAttendees: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components['parameters']['EventId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description UTF-8 CSV with a BOM; attendee rows are capped at 2,000. */
+      200: {
+        headers: {
+          'Content-Disposition'?: string;
+          'Cache-Control'?: 'private, no-store';
+          'X-Content-Type-Options'?: 'nosniff';
+          [name: string]: unknown;
+        };
+        content: {
+          'text/csv': string;
+        };
+      };
+      404: components['responses']['Error'];
+      413: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  getRecommendations: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Upcoming visible events and non-identifying recommendation reasons. */
+      200: {
+        headers: {
+          'Cache-Control'?: 'private, no-store';
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Recommendations'];
+        };
+      };
+      429: components['responses']['RateLimited'];
+    };
+  };
+  getRecommendationPreference: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Personalization preference. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RecommendationPreference'];
+        };
+      };
+    };
+  };
+  updateRecommendationPreference: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['RecommendationPreference'];
+      };
+    };
+    responses: {
+      /** @description Updated personalization preference. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RecommendationPreference'];
+        };
+      };
+      429: components['responses']['RateLimited'];
+    };
+  };
+  deleteRecommendationData: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Derived recommendation data was deleted. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            /** @constant */
+            deleted: true;
+          };
+        };
+      };
+    };
+  };
+  followClub: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components['parameters']['ClubId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The club is followed. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components['responses']['Error'];
+    };
+  };
+  unfollowClub: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components['parameters']['ClubId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The club is no longer followed. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components['responses']['Error'];
     };
   };
 }

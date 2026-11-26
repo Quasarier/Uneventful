@@ -1,11 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import type { AuthPrincipal } from '../auth/auth.types';
+import { AnalyticsCacheService } from '../analytics/analytics-cache.service';
 import type { ListEventAttendeesDto } from './dto/list-event-attendees.dto';
 import { RsvpsRepository } from './rsvps.repository';
 
 @Injectable()
 export class RsvpsService {
-  constructor(private readonly repository: RsvpsRepository) {}
+  constructor(
+    private readonly repository: RsvpsRepository,
+    private readonly analyticsCache: AnalyticsCacheService,
+  ) {}
 
   listMine(userId: string) {
     return this.repository.listMine(userId);
@@ -19,12 +23,16 @@ export class RsvpsService {
     return this.repository.getStatus(eventId, userId);
   }
 
-  rsvp(eventId: string, userId: string, checkConflicts: boolean) {
-    return this.repository.rsvp(eventId, userId, checkConflicts);
+  async rsvp(eventId: string, userId: string, checkConflicts: boolean) {
+    const result = await this.repository.rsvp(eventId, userId, checkConflicts);
+    await this.analyticsCache.invalidateEvent(eventId, userId);
+    return result;
   }
 
-  cancel(eventId: string, userId: string) {
-    return this.repository.cancel(eventId, userId);
+  async cancel(eventId: string, userId: string) {
+    const result = await this.repository.cancel(eventId, userId);
+    await this.analyticsCache.invalidateEvent(eventId, userId);
+    return result;
   }
 
   issueTicket(eventId: string, userId: string) {

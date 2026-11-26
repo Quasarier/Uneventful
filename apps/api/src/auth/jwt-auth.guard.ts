@@ -4,7 +4,7 @@ import { Reflector } from '@nestjs/core';
 import type { Environment } from '../config/environment';
 import { AuthService } from './auth.service';
 import { AuthRateLimitService, type RateLimitMessages } from './auth-rate-limit.service';
-import { IS_PUBLIC_KEY } from './auth.decorators';
+import { IS_OPTIONAL_AUTH_KEY, IS_PUBLIC_KEY } from './auth.decorators';
 import type { AuthenticatedRequest } from './auth.types';
 
 const anonymousRateLimitMessages: RateLimitMessages = {
@@ -33,6 +33,14 @@ export class JwtAuthGuard implements CanActivate {
 
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const authorization = request.headers.authorization;
+    const isOptionalAuth = this.reflector.getAllAndOverride<boolean>(IS_OPTIONAL_AUTH_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (isOptionalAuth && !authorization) {
+      await this.consumeAnonymousRequest(request);
+      return true;
+    }
     const match = authorization?.match(/^Bearer ([A-Za-z0-9._~-]+)$/);
 
     if (!match?.[1]) {

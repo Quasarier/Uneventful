@@ -6,9 +6,10 @@ import { EventsController } from './events.controller';
 import { EventsRepository } from './events.repository';
 import { EventsService } from './events.service';
 import { VenueBookingsModule } from '../venues/venue-bookings.module';
+import { AnalyticsModule } from '../analytics/analytics.module';
 
 @Module({
-  imports: [DatabaseModule, AuthRateLimitModule, VenueBookingsModule],
+  imports: [DatabaseModule, AuthRateLimitModule, VenueBookingsModule, AnalyticsModule],
   controllers: [EventsController],
   providers: [EventsRepository, EventsService, EventImageStorageService],
 })

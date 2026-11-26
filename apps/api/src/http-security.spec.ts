@@ -11,6 +11,7 @@ describe('HTTP security configuration', () => {
     expect(options.origin).not.toContain('*');
     expect(options.credentials).toBe(true);
     expect(options.allowedHeaders).toContain('X-Uneventful-CSRF');
+    expect(options.exposedHeaders).toContain('Content-Disposition');
     expect(options.methods).toContain('DELETE');
   });
 

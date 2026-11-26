@@ -12,6 +12,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { AnalyticsCacheService } from '../analytics/analytics-cache.service';
 import { AuthRateLimitService, type RateLimitMessages } from '../auth/auth-rate-limit.service';
 import type { AuthenticatedRequest, AuthPrincipal } from '../auth/auth.types';
 import type { Environment } from '../config/environment';
@@ -41,6 +42,7 @@ export class CheckinsController {
     @Inject(AuthRateLimitService)
     private readonly rateLimit: AuthRateLimitService,
     private readonly config: ConfigService<Environment, true>,
+    private readonly analyticsCache: AnalyticsCacheService,
   ) {}
 
   @Get(':id/checkin-manifest')
@@ -64,7 +66,9 @@ export class CheckinsController {
   ) {
     const actor = requirePrincipal(request);
     await this.consumeRateLimit(actor);
-    return this.checkins.checkIn(eventId, actor, dto);
+    const result = await this.checkins.checkIn(eventId, actor, dto);
+    if (result.status === 'VALID') await this.analyticsCache.invalidateEvent(eventId);
+    return result;
   }
 
   @Post(':id/checkins/sync')
@@ -76,7 +80,11 @@ export class CheckinsController {
   ) {
     const actor = requirePrincipal(request);
     await this.consumeRateLimit(actor);
-    return this.checkins.syncCheckins(eventId, actor, dto);
+    const result = await this.checkins.syncCheckins(eventId, actor, dto);
+    if (result.data.some((item) => item.status === 'VALID')) {
+      await this.analyticsCache.invalidateEvent(eventId);
+    }
+    return result;
   }
 
   @Get(':id/checkins/lookup')
@@ -100,7 +108,9 @@ export class CheckinsController {
   ) {
     const actor = requirePrincipal(request);
     await this.consumeRateLimit(actor);
-    return this.checkins.manualCheckIn(eventId, actor, dto);
+    const result = await this.checkins.manualCheckIn(eventId, actor, dto);
+    if (result.status === 'VALID') await this.analyticsCache.invalidateEvent(eventId);
+    return result;
   }
 
   private consumeRateLimit(actor: AuthPrincipal): Promise<void> {

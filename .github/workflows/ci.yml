@@ -122,6 +122,10 @@ jobs:
       - name: Web unit tests
         run: pnpm --filter @uneventful/web test
 
+      - name: Recommendation evaluation smoke check
+        run: pnpm --filter @uneventful/api recommendations:evaluate
+        continue-on-error: true
+
       - name: Install Playwright Chromium
         run: pnpm --filter @uneventful/web exec playwright install --with-deps chromium
 
@@ -158,7 +162,7 @@ jobs:
             );
             const testCount = count(report.suites);
             console.log(`Playwright test count: ${testCount}`);
-            const minimumTestCount = 31;
+            const minimumTestCount = 34;
             if (testCount < minimumTestCount) {
               console.error(`Playwright suite ran ${testCount} tests; minimum is ${minimumTestCount}.`);
               process.exit(1);
@@ -229,7 +233,7 @@ jobs:
           ' "$results"
 
           # Raise this threshold whenever integration tests are added.
-          minimum_test_count=98
+          minimum_test_count=106
           if (( test_count < minimum_test_count )); then
             echo "The API integration suite ran $test_count tests; minimum is $minimum_test_count." >&2
             exit 1

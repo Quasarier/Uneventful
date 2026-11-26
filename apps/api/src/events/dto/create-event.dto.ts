@@ -1,5 +1,8 @@
 import {
   IsBoolean,
+  IsArray,
+  ArrayMaxSize,
+  ArrayUnique,
   IsDateString,
   IsInt,
   IsOptional,
@@ -22,6 +25,15 @@ export class CreateEventDto {
   @Length(1, 20_000)
   @Matches(/\S/)
   description!: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ArrayUnique()
+  @IsString({ each: true })
+  @Length(1, 48, { each: true })
+  @Matches(/\S/, { each: true })
+  tags?: string[];
 
   @IsDateString({ strict: true })
   @Matches(/(?:Z|[+-]\d{2}:\d{2})$/)

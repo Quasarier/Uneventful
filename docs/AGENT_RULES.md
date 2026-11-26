@@ -49,7 +49,7 @@ Treat them as requirements, not suggestions.
 
 - Run database and Redis integration tests with
   `bash scripts/test-integration-local.sh` from Git Bash on Windows.
-- CI enforces minimums of 84 API integration tests and 28 Playwright tests.
+- CI enforces minimums of 106 API integration tests and 34 Playwright tests.
   Raise the corresponding minimum whenever tests are added.
 - Never weaken or delete assertions, skip tests, or lower a minimum to make a
   check pass. Change an expectation only when the requirement changes, and

@@ -9,6 +9,7 @@ export const testEvent: components['schemas']['Event'] = {
   title: 'Campus Showcase',
   slug: 'campus-showcase',
   description: 'Meet the campus clubs.',
+  tags: [],
   status: 'APPROVED',
   startAt: new Date(Date.now() + 86_400_000).toISOString(),
   endAt: new Date(Date.now() + 90_000_000).toISOString(),
@@ -41,6 +42,7 @@ const corsHeaders = {
   'access-control-allow-headers': 'Authorization,Content-Type,X-Uneventful-CSRF',
   'access-control-allow-methods': 'GET,POST,DELETE,OPTIONS',
   'access-control-allow-origin': process.env.NEXT_PUBLIC_WEB_ORIGIN ?? 'http://localhost:3000',
+  'access-control-expose-headers': 'Content-Disposition',
 };
 
 const notificationTypes = [
@@ -77,6 +79,7 @@ export async function mockStudentApi(
 ): Promise<void> {
   const event = options.event ?? testEvent;
   const preferences = notificationPreferences.map((preference) => ({ ...preference }));
+  let personalized = true;
 
   await page.context().route('**/api/v1/**', async (route) => {
     const request = route.request();
@@ -105,6 +108,80 @@ export async function mockStudentApi(
         contentType: 'application/json',
         headers: corsHeaders,
         body: JSON.stringify(options.profile ?? profile),
+      });
+      return;
+    }
+    if (url.pathname.endsWith('/recommendations')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: corsHeaders,
+        body: JSON.stringify({ data: [], personalized }),
+      });
+      return;
+    }
+    if (url.pathname.endsWith('/me/recommendation-preference')) {
+      if (request.method() === 'PATCH') {
+        personalized = (request.postDataJSON() as { personalized: boolean }).personalized;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: corsHeaders,
+        body: JSON.stringify({ personalized }),
+      });
+      return;
+    }
+    if (url.pathname.endsWith('/me/recommendation-data')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: corsHeaders,
+        body: JSON.stringify({ deleted: true }),
+      });
+      return;
+    }
+    if (/\/clubs\/[^/]+\/follow$/.test(url.pathname)) {
+      await route.fulfill({
+        status: request.method() === 'POST' ? 201 : 200,
+        contentType: 'application/json',
+        headers: corsHeaders,
+        body: JSON.stringify({ followed: request.method() === 'POST' }),
+      });
+      return;
+    }
+    if (url.pathname.endsWith('/attendees/export')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/csv',
+        headers: {
+          ...corsHeaders,
+          'content-disposition': 'attachment; filename="event-attendees.csv"',
+          'x-content-type-options': 'nosniff',
+        },
+        body: '\uFEFFDisplay name,Status,Check-in time\r\n',
+      });
+      return;
+    }
+    if (/\/events\/[^/]+\/analytics$/.test(url.pathname)) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: corsHeaders,
+        body: JSON.stringify({
+          eventId: event.id,
+          period: {
+            from: new Date(Date.now() - 86_400_000).toISOString(),
+            to: new Date().toISOString(),
+            bucket: 'day',
+          },
+          rsvps: { going: 10, waitlisted: 5, cancelled: 5, checkedIn: 5 },
+          noShowRate: 10,
+          repeatAttendeeRate: 20,
+          rsvpsOverTime: [],
+          checkInsByTime: [],
+          peakSignupHours: [],
+        }),
       });
       return;
     }
