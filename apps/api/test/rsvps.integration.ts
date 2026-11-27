@@ -49,6 +49,9 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { AnalyticsCacheService } from '../src/analytics/analytics-cache.service';
 import { AnalyticsController } from '../src/analytics/analytics.controller';
 import { AnalyticsService } from '../src/analytics/analytics.service';
+import { AdminService } from '../src/admin/admin.service';
+import { VenueBookingsRepository } from '../src/venues/venue-bookings.repository';
+import { VenueBookingsService } from '../src/venues/venue-bookings.service';
 
 const appDatabaseUrl = process.env.TEST_DATABASE_URL;
 const migrationDatabaseUrl = process.env.TEST_MIGRATION_DATABASE_URL;
@@ -1500,6 +1503,7 @@ describe('RSVP PostgreSQL concurrency integration', () => {
       lastName: 'Organizer',
       avatarUrl: null,
     });
+
     const authenticatedSession = await auth.authenticateAccessTokenSession(session.accessToken);
     const expiredToken = await issueExpiredAccessToken(authenticatedSession.familyId);
     const expiredSocket = connectToRealAuthRealtime(expiredToken);
@@ -1534,6 +1538,149 @@ describe('RSVP PostgreSQL concurrency integration', () => {
     await expect(waitForSocketConnect(rejoiningSocket)).rejects.toThrow();
     expect(rejoiningSocket.connected).toBe(false);
   }, 12_000);
+
+  it('disconnects sockets after admin role revocation, suspension, and club membership changes', async () => {
+    if (!realAuthRealtimeApp) throw new Error('The real-auth integration server did not start.');
+    const auth = realAuthRealtimeApp.get(AuthService);
+    const adminService = new AdminService(
+      appPrisma,
+      rateLimitService,
+      analyticsCache,
+      new VenueBookingsService(new VenueBookingsRepository(appPrisma), configFor(appDatabaseUrl!)),
+    );
+    const createSession = async (role: 'ADMIN' | 'STUDENT' | 'ORGANIZER') => {
+      const id = randomUUID();
+      const email = `${id}@example.edu`;
+      await appPrisma.user.create({
+        data: {
+          id,
+          email,
+          googleSubject: id,
+          firstName: 'Admin',
+          lastName: 'Revocation Integration',
+          role,
+        },
+      });
+      const session = await auth.completeGoogleLogin({
+        googleSubject: id,
+        email,
+        firstName: 'Admin',
+        lastName: 'Revocation Integration',
+        avatarUrl: null,
+      });
+      const authenticated = await auth.authenticateAccessTokenSession(session.accessToken);
+      return { ...session, principal: authenticated.principal, familyId: authenticated.familyId };
+    };
+    const actor = await createSession('ADMIN');
+    const administratorTarget = await createSession('ADMIN');
+    const suspendedTarget = await createSession('STUDENT');
+    const membershipTarget = await createSession('ORGANIZER');
+    const clubIds = [randomUUID(), randomUUID(), randomUUID()];
+    await appPrisma.club.createMany({
+      data: clubIds.map((id) => ({
+        id,
+        name: `Revocation integration ${id}`,
+        slug: `revocation-integration-${id}`,
+        createdById: actor.principal.id,
+      })),
+    });
+    await appPrisma.clubMembership.createMany({
+      data: [
+        {
+          clubId: clubIds[0]!,
+          userId: membershipTarget.principal.id,
+          role: 'OFFICER',
+          status: 'ACTIVE',
+        },
+        {
+          clubId: clubIds[1]!,
+          userId: membershipTarget.principal.id,
+          role: 'OFFICER',
+          status: 'ACTIVE',
+        },
+      ],
+    });
+
+    const mutateAndMeasure = async (
+      target: typeof administratorTarget,
+      label: string,
+      mutation: () => Promise<unknown>,
+    ) => {
+      const socket = connectToRealAuthRealtime(target.accessToken);
+      await waitForSocketConnect(socket);
+      const disconnected = waitForSocketEvent(socket, 'disconnect', 5_000);
+      const startedAt = performance.now();
+      await mutation();
+      await expect(disconnected).resolves.toBe('io server disconnect');
+      const elapsedMs = performance.now() - startedAt;
+      expect(elapsedMs).toBeLessThan(5_000);
+      process.stdout.write(
+        `Admin ${label} disconnected its live socket in ${elapsedMs.toFixed(1)} ms.\n`,
+      );
+    };
+
+    await mutateAndMeasure(administratorTarget, 'role revocation', () =>
+      adminService.revokeAdminRole(
+        actor.principal,
+        administratorTarget.principal.id,
+        'Role revocation socket test.',
+        '127.0.0.1',
+      ),
+    );
+    await expect(auth.authenticateAccessToken(administratorTarget.accessToken)).rejects.toThrow();
+    expect(
+      await appPrisma.refreshToken.count({
+        where: {
+          userId: administratorTarget.principal.id,
+          familyId: administratorTarget.familyId,
+          revokedAt: null,
+        },
+      }),
+    ).toBe(0);
+
+    await mutateAndMeasure(suspendedTarget, 'user suspension', () =>
+      adminService.setUserActive(
+        actor.principal,
+        suspendedTarget.principal.id,
+        false,
+        'Suspension socket test.',
+        '127.0.0.1',
+      ),
+    );
+    await expect(auth.authenticateAccessToken(suspendedTarget.accessToken)).rejects.toThrow();
+    expect(
+      await appPrisma.refreshToken.count({
+        where: {
+          userId: suspendedTarget.principal.id,
+          familyId: suspendedTarget.familyId,
+          revokedAt: null,
+        },
+      }),
+    ).toBe(0);
+
+    await mutateAndMeasure(membershipTarget, 'club membership change', () =>
+      adminService.revokeOrganizerMembership(
+        actor.principal,
+        membershipTarget.principal.id,
+        clubIds[0]!,
+        'Membership revocation socket test.',
+        '127.0.0.1',
+      ),
+    );
+    await expect(auth.authenticateAccessToken(membershipTarget.accessToken)).rejects.toThrow();
+    expect(
+      await appPrisma.user.findUniqueOrThrow({ where: { id: membershipTarget.principal.id } }),
+    ).toMatchObject({ role: 'ORGANIZER', tokenVersion: 1 });
+    expect(
+      await appPrisma.refreshToken.count({
+        where: {
+          userId: membershipTarget.principal.id,
+          familyId: membershipTarget.familyId,
+          revokedAt: null,
+        },
+      }),
+    ).toBe(0);
+  }, 30_000);
 
   it('rejects a spoofed handshake origin and caps each user at three live sockets', async () => {
     const spoofedSocket = connectRealtime(0, organizerId, 'https://attacker.example');

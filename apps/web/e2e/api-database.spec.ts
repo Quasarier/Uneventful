@@ -163,7 +163,10 @@ test('uploads and renders a real event image without CSP or COEP errors', async 
     const adminSessionBody: { accessToken: string } = await adminRefresh.json();
     const approvalResponse = await adminContext.request.post(
       `${apiBaseUrl}/events/${fixture.eventId}/approve`,
-      { headers: { Authorization: `Bearer ${adminSessionBody.accessToken}` } },
+      {
+        headers: { Authorization: `Bearer ${adminSessionBody.accessToken}` },
+        data: { reason: 'E2E event image approval' },
+      },
     );
     expect(approvalResponse.status()).toBe(201);
 
