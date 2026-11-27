@@ -12,6 +12,7 @@ const navigation = [
   { href: '/calendar', label: 'Calendar' },
   { href: '/notifications', label: 'Notifications' },
   { href: '/profile', label: 'Profile' },
+  { href: '/admin', label: 'Admin' },
 ];
 
 export function AppShell({ children }: Readonly<{ children: React.ReactNode }>) {
@@ -51,7 +52,9 @@ export function AppShell({ children }: Readonly<{ children: React.ReactNode }>) 
           >
             {navigation
               .filter(
-                (item) => userRole === 'STUDENT' || !['/tickets', '/calendar'].includes(item.href),
+                (item) =>
+                  (item.href !== '/admin' || userRole === 'ADMIN') &&
+                  (userRole === 'STUDENT' || !['/tickets', '/calendar'].includes(item.href)),
               )
               .map((item) => (
                 <Link
