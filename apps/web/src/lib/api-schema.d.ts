@@ -153,7 +153,7 @@ export interface paths {
     /** List active venues */
     get: operations['listVenues'];
     put?: never;
-    /** Create a venue (administrators only) */
+    /** Create a venue with a required administrative reason */
     post: operations['createVenue'];
     delete?: never;
     options?: never;
@@ -193,7 +193,7 @@ export interface paths {
     delete: operations['retireVenue'];
     options?: never;
     head?: never;
-    /** Update a venue (administrators only) */
+    /** Update a venue with a required administrative reason */
     patch: operations['updateVenue'];
     trace?: never;
   };
@@ -208,12 +208,46 @@ export interface paths {
     get: operations['getEvent'];
     put?: never;
     post?: never;
-    /** Soft-delete an event and release its venue booking */
-    delete: operations['deleteEvent'];
+    delete?: never;
     options?: never;
     head?: never;
     /** Update an event and synchronize its venue booking */
     patch: operations['updateEvent'];
+    trace?: never;
+  };
+  '/events/{id}/approve': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Approve a pending event with a required administrator reason */
+    post: operations['approveEvent'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/events/{id}/reject': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Reject a pending event with a required administrator reason */
+    post: operations['rejectEvent'];
+    /** Soft-delete an event and release its venue booking */
+    delete: operations['deleteEvent'];
+    options?: never;
+    head?: never;
+    patch?: never;
     trace?: never;
   };
   '/events/{id}/attendees': {
@@ -496,7 +530,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/clubs/{id}/follow': {
+  '/clubs/{clubId}/follow': {
     parameters: {
       query?: never;
       header?: never;
@@ -514,6 +548,349 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/clubs/{clubId}/verification': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Read verification status and its reason for an active club member */
+    get: operations['getClubVerification'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/reports': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Report a visible event or club */
+    post: operations['submitModerationReport'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/events/approval-queue': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List pending events for administrators */
+    get: operations['listAdminApprovalQueue'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/events/{id}/approve': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Approve a pending event with a required reason */
+    post: operations['approveAdminEvent'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/events/{id}/reject': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Reject a pending event with a required reason */
+    post: operations['rejectAdminEvent'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/clubs': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List clubs including verification and suspension status */
+    get: operations['listAdminClubs'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/clubs/{id}/verification': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /** Verify, unverify, or suspend a club with a required reason */
+    patch: operations['updateAdminClubVerification'];
+    trace?: never;
+  };
+  '/admin/venues': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List active and inactive venues */
+    get: operations['listAdminVenues'];
+    put?: never;
+    /** Create a venue with a required administrative reason */
+    post: operations['createAdminVenue'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/venues/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Retire a venue only when it has no future approved bookings */
+    delete: operations['retireAdminVenue'];
+    options?: never;
+    head?: never;
+    /** Update a venue with a required administrative reason */
+    patch: operations['updateAdminVenue'];
+    trace?: never;
+  };
+  '/admin/users': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Search users with administrator-only email visibility */
+    get: operations['searchAdminUsers'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/users/{id}/organizer-memberships/{clubId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Grant an organizer club membership with a required reason */
+    post: operations['grantOrganizerMembership'];
+    /** Revoke an organizer club membership with a required reason */
+    delete: operations['revokeOrganizerMembership'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/users/{id}/admin-grant-requests': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Request an administrator role grant after fresh Google sign-in */
+    post: operations['requestAdminRoleGrant'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/admin-grant-requests': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List pending administrator role-grant requests */
+    get: operations['listAdminRoleGrantRequests'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/admin-grant-requests/{id}/approve': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Approve another administrator's role grant request */
+    post: operations['approveAdminRoleGrant'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/users/{id}/admin-role/revoke': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Revoke an administrator role with a required reason */
+    post: operations['revokeAdminRole'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/users/{id}/suspend': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Suspend a user with a required reason */
+    post: operations['suspendAdminUser'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/users/{id}/reactivate': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Reactivate a suspended user with a required reason */
+    post: operations['reactivateAdminUser'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/reports': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List moderation reports and reporter details for administrators */
+    get: operations['listAdminReports'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/reports/{id}/resolve': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Resolve a report with a moderation action and reason */
+    post: operations['resolveAdminReport'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/audit-logs': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Read and audit a bounded page of immutable administrator audit entries */
+    get: operations['listAdminAuditLogs'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -522,6 +899,76 @@ export interface components {
       statusCode: number;
       message: string | string[];
       error?: string;
+    };
+    AdminReasonRequest: {
+      reason: string;
+    };
+    ChangeClubVerificationRequest: components['schemas']['AdminReasonRequest'] & {
+      /** @enum {string} */
+      status: 'UNVERIFIED' | 'VERIFIED' | 'SUSPENDED';
+    };
+    AdminCreateVenueRequest: {
+      name: string;
+      building?: string | null;
+      capacity: number;
+      bufferMinutes: number;
+      availabilityHours: components['schemas']['VenueAvailabilityHour'][];
+      reason: string;
+    };
+    AdminUpdateVenueRequest: {
+      name?: string;
+      building?: string | null;
+      capacity?: number;
+      bufferMinutes?: number;
+      isActive?: boolean;
+      availabilityHours?: components['schemas']['VenueAvailabilityHour'][];
+      reason: string;
+    };
+    CreateModerationReportRequest: {
+      /** @enum {string} */
+      targetType: 'EVENT' | 'CLUB';
+      /** Format: uuid */
+      targetId: string;
+      /** @enum {string} */
+      reason: 'SPAM' | 'HARASSMENT' | 'UNSAFE' | 'MISLEADING' | 'OTHER';
+      note?: string;
+    };
+    ResolveModerationReportRequest: {
+      /** @enum {string} */
+      action: 'DISMISS' | 'HIDE_EVENT' | 'CANCEL_EVENT' | 'SUSPEND_CLUB';
+      reason: string;
+    };
+    AdminPage: {
+      data: {
+        [key: string]: unknown;
+      }[];
+      page?: number;
+      limit?: number;
+      total?: number;
+      totalPages?: number;
+    };
+    AdminAuditPage: {
+      data: {
+        [key: string]: unknown;
+      }[];
+      nextCursor: string | null;
+    };
+    ClubVerification: {
+      /** Format: uuid */
+      id: string;
+      /** @enum {string} */
+      verificationStatus: 'UNVERIFIED' | 'VERIFIED' | 'SUSPENDED';
+      verificationReason: string | null;
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    ModerationReportCreated: {
+      /** Format: uuid */
+      id: string;
+      /** @constant */
+      status: 'OPEN';
+      /** Format: date-time */
+      createdAt: string;
     };
     AnalyticsPeriod: {
       /** Format: date-time */
@@ -1026,6 +1473,13 @@ export interface components {
     AnalyticsFrom: string;
     AnalyticsTo: string;
     AnalyticsBucket: 'day' | 'week';
+    AdminPage: number;
+    AdminLimit: number;
+    AdminSearch: string;
+    UserId: string;
+    AdminGrantRequestId: string;
+    ModerationReportId: string;
+    MembershipClubId: string;
   };
   requestBodies: never;
   headers: never;
@@ -1328,7 +1782,7 @@ export interface operations {
     };
     requestBody: {
       content: {
-        'application/json': components['schemas']['CreateVenueRequest'];
+        'application/json': components['schemas']['AdminCreateVenueRequest'];
       };
     };
     responses: {
@@ -1404,7 +1858,11 @@ export interface operations {
       };
       cookie?: never;
     };
-    requestBody?: never;
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AdminReasonRequest'];
+      };
+    };
     responses: {
       /** @description The retired venue. */
       200: {
@@ -1430,7 +1888,7 @@ export interface operations {
     };
     requestBody: {
       content: {
-        'application/json': components['schemas']['UpdateVenueRequest'];
+        'application/json': components['schemas']['AdminUpdateVenueRequest'];
       };
     };
     responses: {
@@ -1470,28 +1928,6 @@ export interface operations {
       404: components['responses']['Error'];
     };
   };
-  deleteEvent: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        id: components['parameters']['EventId'];
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description The event was deleted. */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-      404: components['responses']['Error'];
-      429: components['responses']['RateLimited'];
-    };
-  };
   updateEvent: {
     parameters: {
       query?: never;
@@ -1518,6 +1954,82 @@ export interface operations {
       };
       404: components['responses']['Error'];
       409: components['responses']['VenueConflict'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  approveEvent: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components['parameters']['EventId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AdminReasonRequest'];
+      };
+    };
+    responses: {
+      /** @description The event was approved. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  rejectEvent: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components['parameters']['EventId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AdminReasonRequest'];
+      };
+    };
+    responses: {
+      /** @description The event was rejected. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  deleteEvent: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components['parameters']['EventId'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The event was deleted. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components['responses']['Error'];
       429: components['responses']['RateLimited'];
     };
   };
@@ -1865,7 +2377,7 @@ export interface operations {
       };
       header?: never;
       path: {
-        id: components['parameters']['ClubId'];
+        clubId: components['parameters']['MembershipClubId'];
       };
       cookie?: never;
     };
@@ -2008,7 +2520,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        id: components['parameters']['ClubId'];
+        clubId: components['parameters']['MembershipClubId'];
       };
       cookie?: never;
     };
@@ -2029,7 +2541,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        id: components['parameters']['ClubId'];
+        clubId: components['parameters']['MembershipClubId'];
       };
       cookie?: never;
     };
@@ -2041,6 +2553,603 @@ export interface operations {
           [name: string]: unknown;
         };
         content?: never;
+      };
+      404: components['responses']['Error'];
+    };
+  };
+  getClubVerification: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        clubId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The club status and administrator-provided reason. */
+      200: {
+        headers: {
+          'Cache-Control'?: 'private, no-store';
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ClubVerification'];
+        };
+      };
+      404: components['responses']['Error'];
+    };
+  };
+  submitModerationReport: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateModerationReportRequest'];
+      };
+    };
+    responses: {
+      /** @description The report was submitted. */
+      201: {
+        headers: {
+          'Cache-Control'?: 'private, no-store';
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ModerationReportCreated'];
+        };
+      };
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  listAdminApprovalQueue: {
+    parameters: {
+      query?: {
+        page?: components['parameters']['AdminPage'];
+        limit?: components['parameters']['AdminLimit'];
+        search?: components['parameters']['AdminSearch'];
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description A page of pending events. */
+      200: {
+        headers: {
+          'Cache-Control'?: 'private, no-store';
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AdminPage'];
+        };
+      };
+      404: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  approveAdminEvent: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components['parameters']['EventId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AdminReasonRequest'];
+      };
+    };
+    responses: {
+      /** @description The event was approved. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  rejectAdminEvent: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components['parameters']['EventId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AdminReasonRequest'];
+      };
+    };
+    responses: {
+      /** @description The event was rejected. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  listAdminClubs: {
+    parameters: {
+      query?: {
+        page?: components['parameters']['AdminPage'];
+        limit?: components['parameters']['AdminLimit'];
+        search?: components['parameters']['AdminSearch'];
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description A page of clubs. */
+      200: {
+        headers: {
+          'Cache-Control'?: 'private, no-store';
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AdminPage'];
+        };
+      };
+      404: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  updateAdminClubVerification: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components['parameters']['ClubId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ChangeClubVerificationRequest'];
+      };
+    };
+    responses: {
+      /** @description The updated club verification status. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  listAdminVenues: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description An allowlisted venue list. */
+      200: {
+        headers: {
+          'Cache-Control'?: 'private, no-store';
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AdminPage'];
+        };
+      };
+      404: components['responses']['Error'];
+    };
+  };
+  createAdminVenue: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AdminCreateVenueRequest'];
+      };
+    };
+    responses: {
+      /** @description The created venue. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  retireAdminVenue: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components['parameters']['VenueId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AdminReasonRequest'];
+      };
+    };
+    responses: {
+      /** @description The venue was retired. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  updateAdminVenue: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components['parameters']['VenueId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AdminUpdateVenueRequest'];
+      };
+    };
+    responses: {
+      /** @description The updated venue. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  searchAdminUsers: {
+    parameters: {
+      query?: {
+        page?: components['parameters']['AdminPage'];
+        limit?: components['parameters']['AdminLimit'];
+        search?: components['parameters']['AdminSearch'];
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description A page of allowlisted user profiles. */
+      200: {
+        headers: {
+          'Cache-Control'?: 'private, no-store';
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AdminPage'];
+        };
+      };
+      404: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  grantOrganizerMembership: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components['parameters']['ClubId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AdminReasonRequest'];
+      };
+    };
+    responses: {
+      /** @description The membership was granted. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  revokeOrganizerMembership: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components['parameters']['ClubId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AdminReasonRequest'];
+      };
+    };
+    responses: {
+      /** @description The membership was revoked. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  requestAdminRoleGrant: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components['parameters']['UserId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AdminReasonRequest'];
+      };
+    };
+    responses: {
+      /** @description A time-limited two-person approval request was created. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  listAdminRoleGrantRequests: {
+    parameters: {
+      query?: {
+        page?: components['parameters']['AdminPage'];
+        limit?: components['parameters']['AdminLimit'];
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description A page of pending grant requests. */
+      200: {
+        headers: {
+          'Cache-Control'?: 'private, no-store';
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AdminPage'];
+        };
+      };
+      404: components['responses']['Error'];
+    };
+  };
+  approveAdminRoleGrant: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components['parameters']['AdminGrantRequestId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AdminReasonRequest'];
+      };
+    };
+    responses: {
+      /** @description The target was granted the administrator role. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+    };
+  };
+  revokeAdminRole: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components['parameters']['UserId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AdminReasonRequest'];
+      };
+    };
+    responses: {
+      /** @description The administrator role was revoked. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+    };
+  };
+  suspendAdminUser: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components['parameters']['UserId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AdminReasonRequest'];
+      };
+    };
+    responses: {
+      /** @description The user was suspended and their sessions revoked. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+    };
+  };
+  reactivateAdminUser: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components['parameters']['UserId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AdminReasonRequest'];
+      };
+    };
+    responses: {
+      /** @description The user was reactivated. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components['responses']['Error'];
+      429: components['responses']['RateLimited'];
+    };
+  };
+  listAdminReports: {
+    parameters: {
+      query?: {
+        page?: components['parameters']['AdminPage'];
+        limit?: components['parameters']['AdminLimit'];
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description A page of moderation reports. */
+      200: {
+        headers: {
+          'Cache-Control'?: 'private, no-store';
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AdminPage'];
+        };
+      };
+      404: components['responses']['Error'];
+    };
+  };
+  resolveAdminReport: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components['parameters']['ModerationReportId'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ResolveModerationReportRequest'];
+      };
+    };
+    responses: {
+      /** @description The moderation report was resolved. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components['responses']['Error'];
+      409: components['responses']['Error'];
+    };
+  };
+  listAdminAuditLogs: {
+    parameters: {
+      query?: {
+        cursor?: string;
+        limit?: components['parameters']['AdminLimit'];
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description A bounded page of immutable audit entries. */
+      200: {
+        headers: {
+          'Cache-Control'?: 'private, no-store';
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AdminAuditPage'];
+        };
       };
       404: components['responses']['Error'];
     };

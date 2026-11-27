@@ -9,16 +9,26 @@ corepack pnpm --filter @uneventful/api routes
 ## Generated routes
 
 ```text
+DELETE /api/v1/admin/users/:id/organizer-memberships/:clubId
+DELETE /api/v1/admin/venues/:id
 DELETE /api/v1/clubs/:id/follow
 DELETE /api/v1/events/:id
 DELETE /api/v1/events/:id/rsvp
 DELETE /api/v1/me/push-subscriptions
 DELETE /api/v1/me/recommendation-data
 DELETE /api/v1/venues/:id
+GET /api/v1/admin/admin-grant-requests
+GET /api/v1/admin/audit-logs
+GET /api/v1/admin/clubs
+GET /api/v1/admin/events/approval-queue
+GET /api/v1/admin/reports
+GET /api/v1/admin/users
+GET /api/v1/admin/venues
 GET /api/v1/auth/google
 GET /api/v1/auth/google/callback
 GET /api/v1/auth/me
 GET /api/v1/clubs/:id/analytics
+GET /api/v1/clubs/:clubId/verification
 GET /api/v1/events
 GET /api/v1/events/:id
 GET /api/v1/events/:id/analytics
@@ -36,10 +46,22 @@ GET /api/v1/recommendations
 GET /api/v1/rsvps/me
 GET /api/v1/venues
 GET /api/v1/venues/:id
+PATCH /api/v1/admin/clubs/:id/verification
+PATCH /api/v1/admin/venues/:id
 PATCH /api/v1/events/:id
 PATCH /api/v1/me/notification-preferences
 PATCH /api/v1/me/recommendation-preference
 PATCH /api/v1/venues/:id
+POST /api/v1/admin/admin-grant-requests/:id/approve
+POST /api/v1/admin/events/:id/approve
+POST /api/v1/admin/events/:id/reject
+POST /api/v1/admin/reports/:id/resolve
+POST /api/v1/admin/users/:id/admin-grant-requests
+POST /api/v1/admin/users/:id/admin-role/revoke
+POST /api/v1/admin/users/:id/organizer-memberships/:clubId
+POST /api/v1/admin/users/:id/reactivate
+POST /api/v1/admin/users/:id/suspend
+POST /api/v1/admin/venues
 POST /api/v1/auth/logout
 POST /api/v1/auth/logout-all
 POST /api/v1/auth/refresh
@@ -58,6 +80,7 @@ POST /api/v1/events/:id/rsvp/ticket
 POST /api/v1/events/:id/submit
 POST /api/v1/events/series
 POST /api/v1/me/push-subscriptions
+POST /api/v1/reports
 POST /api/v1/unsubscribe
 POST /api/v1/venues
 POST /api/v1/venues/conflicts
@@ -156,3 +179,21 @@ Analytics routes use no-store responses and 90-day/100-bucket bounds.
 support defaults to 5 distinct students. The reproducible offline evaluation
 is a synthetic smoke check and does not establish production relevance or
 fairness.
+
+## Stage 12 admin tools and moderation
+
+| Route group                          | Authorization and response scope                                                                                                                                                                                                                                      | Test coverage                                                                                                                                                                                                                 |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/api/v1/admin/*`                    | Requires an active access-session family and the administrator role read from PostgreSQL; optional `ADMIN_IP_ALLOWLIST`; private/no-store; per-user admin rate limit. Non-admin and anonymous responses are masked as 404.                                            | `uses the real access-token session family and masks non-admin and anonymous callers` and `returns 429 with Retry-After after the per-admin request limit` in `apps/api/test/admin.integration.ts`.                           |
+| Approval queue, event approve/reject | Admin-only, reason required, self-approval blocked, venue conflicts rechecked in the booking transaction; notification rows are committed with the action.                                                                                                            | `restricts approval and rejection to admins and blocks self-approval` in `apps/api/test/events.integration.ts`; additional transaction/concurrency edge cases remain unverified.                                              |
+| Club verification and suspension     | Status changes are reasoned and audited. Suspension blocks new submissions, cancels and hides future approved events, releases venue bookings/reminders, sends deduplicated attendee notifications, and clears analytics/recommendation cache entries.                | `hides and cancels future approved club events, invalidates caches, and notifies once` in `apps/api/test/admin.integration.ts`.                                                                                               |
+| Venue management                     | Admin-only list includes inactive venues; retirement fails while future approved bookings exist.                                                                                                                                                                      | `limits venue management to admins and returns masked 404s for inactive venues` in `apps/api/test/events.integration.ts`; the future-booking retirement block is implemented but has no dedicated integration assertion yet.  |
+| User roles and account state         | Role changes require a reason, increment token version, revoke refresh-token families, notify the user, and publish socket revocation. Admin grants require recent Google sign-in and approval by a second, non-requesting admin; the last active admin is protected. | `requires recent re-authentication and a different admin for role grants` in `apps/api/test/admin.integration.ts`; suspension, last-admin protection, and socket eviction are not yet covered by a Stage 12 integration test. |
+| Reports and takedown                 | Fixed reason/action allowlists, one open report per reporter/target, rate-limited submission, reporter identity visible only to admins, immediate takedown with cache invalidation and deduplicated attendee notifications.                                           | No real-PostgreSQL/Redis Stage 12 report-flow integration test has been added; behavior is not verified end to end.                                                                                                           |
+| Audit log                            | Append-only actor/target/reason/before/after/IP/timestamp data; paginated reads audit themselves. The application role is denied `UPDATE`, `DELETE`, and `TRUNCATE`.                                                                                                  | `verify-constraints.sql` exercises app-role denial, and `verify-audit-immutability.sql` checks mutation/truncate triggers. No Stage 12 integration assertion yet checks audit fields for every admin action.                  |
+
+The admin console is dynamically loaded only after the session profile reports
+`ADMIN`; other roles receive a masked page and do not request admin data.
+`apps/web/e2e/admin.spec.ts` covers reason-confirmed approval, CSP, axe, and the
+non-admin route gate. User, report-resolution, audit, club-suspension, and
+venue-retirement browser workflows remain unverified.
