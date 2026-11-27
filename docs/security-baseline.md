@@ -185,3 +185,44 @@ does not validate production relevance, fairness, or privacy against a real
 population. Account deletion is not currently exposed as an API flow; if
 introduced, it must remove recommendation preferences/consent records and
 purge the user's derived cache before the account is considered deleted.
+
+## Administrator access and moderation
+
+Every admin controller and the legacy event-approval/venue mutation routes
+require both a valid active access-session family and the role currently
+stored in PostgreSQL. Admin routes use a separate per-user Redis limiter,
+`Cache-Control: private, no-store`, allowlisted request DTOs, and the same
+masked 404 behavior for anonymous and non-admin callers as for unknown
+resources. `ADMIN_IP_ALLOWLIST` is optional and accepts comma-separated IP
+addresses or CIDR networks; empty disables it. The API must run behind only
+the configured trusted proxy hops when this restriction is enabled.
+
+Role grants require the requester's refresh-token family to have been created
+within five minutes, and a different administrator must approve within 15
+minutes. The requester and target cannot approve. Grant approval, role changes,
+membership changes, account suspension/reactivation, and club verification
+are serialized where needed, require reasons, append allowlisted before/after
+values and actor IP to the immutable audit log, revoke refresh-token families,
+increment token versions, publish socket revocation, and enqueue account
+notifications. The last active administrator cannot be demoted or suspended.
+The application database role has no `UPDATE`, `DELETE`, or `TRUNCATE`
+privileges on `audit_logs`; the verification SQL exercises these denials and
+the audit mutation triggers.
+
+Suspending a club blocks future event creation/submission and cancels future
+approved events. Those events are soft-hidden from non-admin event reads,
+search, RSVP/calendar data, recommendations, attendee exports, and caches;
+venue bookings and reminders are released and deduplicated cancellation
+notifications are enqueued transactionally for organizers and attendees.
+Moderation reports use fixed target/reason/action enums and a unique open
+report key. Reporter identity is returned only to the admin report view and
+not to club-facing APIs. Event takedown uses the same cancellation, venue,
+reminder, notification, audit, and cache-invalidation path.
+
+Stage 12 coverage currently includes real-PostgreSQL/Redis tests for active
+admin session authorization and masking, admin rate-limit headers, fresh
+reauthentication/two-person admin grants, club suspension cancellation,
+notification deduplication, and affected recommendation-cache invalidation.
+Report resolution, all-admin-route authorization, last-admin protection,
+account suspension socket eviction, and the complete audit-field matrix still
+need dedicated integration coverage before release.

@@ -24,10 +24,13 @@ RUN_ID="$(date +%s)-$$"
 POSTGRES_CONTAINER="uneventful-it-postgres-$RUN_ID"
 REDIS_CONTAINER="uneventful-it-redis-$RUN_ID"
 OBJECT_STORAGE_CONTAINER="uneventful-it-object-storage-$RUN_ID"
+INTEGRATION_RESULTS="$(mktemp)"
+PLAYWRIGHT_RESULTS="$(mktemp)"
 
 cleanup() {
   status=$?
   trap - EXIT INT TERM
+  rm -f "$INTEGRATION_RESULTS" "$PLAYWRIGHT_RESULTS"
   docker rm --force "$OBJECT_STORAGE_CONTAINER" >/dev/null 2>&1 || true
   docker rm --force "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
   docker rm --force "$REDIS_CONTAINER" >/dev/null 2>&1 || true
@@ -256,9 +259,41 @@ fi
 echo "Seed refused production as expected."
 
 echo "Running API PostgreSQL and Redis integration tests..."
-run_pnpm --filter @uneventful/api test:integration
+run_pnpm --filter @uneventful/api test:integration \
+  --reporter=default \
+  --reporter=json \
+  "--outputFile.json=$INTEGRATION_RESULTS"
+node - "$INTEGRATION_RESULTS" <<'NODE'
+const fs = require('node:fs');
+const report = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const count = report.numTotalTests;
+const minimum = 118;
+console.log(`API integration test count: ${count}`);
+if (!Number.isSafeInteger(count) || count < minimum) {
+  console.error(`The API integration suite ran ${count} tests; minimum is ${minimum}.`);
+  process.exit(1);
+}
+NODE
 
 if [ "${RUN_E2E:-0}" = "1" ]; then
+  echo "Verifying the Playwright test-count minimum..."
+  run_pnpm --filter @uneventful/web exec playwright test --list --reporter=json \
+    > "$PLAYWRIGHT_RESULTS"
+  node - "$PLAYWRIGHT_RESULTS" <<'NODE'
+const fs = require('node:fs');
+const report = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const count = (suites) => suites.reduce(
+  (total, suite) => total + (suite.specs?.length ?? 0) + count(suite.suites ?? []),
+  0
+);
+const testCount = count(report.suites);
+const minimum = 36;
+console.log(`Playwright test count: ${testCount}`);
+if (testCount < minimum) {
+  console.error(`The Playwright suite contains ${testCount} tests; minimum is ${minimum}.`);
+  process.exit(1);
+}
+NODE
   echo "Running the full Playwright suite against the disposable API, PostgreSQL, and Redis..."
   run_pnpm --filter @uneventful/web test:e2e
 fi

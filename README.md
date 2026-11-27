@@ -196,6 +196,38 @@ fixed-seed synthetic precision@5 and coverage smoke evaluation. The evaluation
 is useful for checking ranking changes are deterministic, but its synthetic
 dataset is not a measure of real-world recommendation quality or fairness.
 
+## Administration and moderation
+
+Every `/api/v1/admin/*` route requires an active access-session family and
+rechecks the administrator role from PostgreSQL; token role claims alone are
+not sufficient. Admin responses are `private, no-store`, rate-limited per
+administrator, and return a masked 404 to anonymous, student, and organizer
+callers. `ADMIN_IP_ALLOWLIST` optionally accepts comma-separated IP addresses
+or CIDR networks (for example `192.0.2.0/24,2001:db8::/32`); an empty value
+disables the network restriction. Configure `TRUST_PROXY_HOPS` only for
+trusted proxy infrastructure so client IP checks cannot be spoofed.
+
+Approval, club verification, venue changes, organizer membership and role
+changes, account suspension, moderation, and audit-log reads require a
+bounded reason and create append-only audit entries. The application database
+role cannot update, delete, or truncate those entries. Admin-role grants
+require a Google sign-in within the previous five minutes and approval by a
+different administrator within 15 minutes; the requester and target cannot
+approve the grant. Role changes bump the token version, revoke refresh-token
+families, disconnect active sockets, and enqueue an account notification.
+The last active administrator cannot be demoted or suspended.
+
+Club suspension blocks new event creation and submission. Future approved
+events are cancelled and hidden, venue bookings and reminders are released,
+attendees and organizers are notified through the transactional notification
+pipeline, and affected analytics/recommendation caches are invalidated.
+Non-admin event lists, details, RSVPs, recommendations, attendee exports, and
+calendar inputs exclude suspended-club events. Venue retirement is blocked
+while future approved bookings remain; resolve those bookings before retiring
+the venue. Moderation reports accept only fixed reason/action enums and a
+bounded note; reporter identity is restricted to administrators and is never
+returned to the reported club.
+
 ## Verification
 
 ```powershell
