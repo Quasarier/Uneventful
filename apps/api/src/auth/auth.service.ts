@@ -146,6 +146,7 @@ export class AuthService implements OnModuleInit {
           tokenHash: this.hashRefreshToken(nextRefreshToken),
           expiresAt: this.getRefreshExpiry(now),
           tokenVersion: record.tokenVersion,
+          googleAuthenticatedAt: record.googleAuthenticatedAt,
         },
         now,
       );
@@ -294,6 +295,7 @@ export class AuthService implements OnModuleInit {
       tokenHash: this.hashRefreshToken(refreshToken),
       expiresAt: this.getRefreshExpiry(now),
       tokenVersion: user.tokenVersion,
+      googleAuthenticatedAt: new Date(),
     });
 
     return this.createSessionTokens(user, refreshToken, familyId);

@@ -60,7 +60,10 @@ describe('RsvpsRepository', () => {
         where: {
           userId,
           status: { in: [RsvpStatus.GOING, RsvpStatus.WAITLISTED] },
-          event: { deletedAt: null },
+          event: {
+            deletedAt: null,
+            club: { verificationStatus: { not: 'SUSPENDED' } },
+          },
         },
         include: expect.objectContaining({
           ticket: { select: { status: true, expiresAt: true } },

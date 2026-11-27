@@ -12,6 +12,11 @@ import { toVenueResponseDto } from './venue-response.dto';
 import { VenueBookingsService } from './venue-bookings.service';
 import { VenuesRepository } from './venues.repository';
 
+export interface AdminVenueAuditContext {
+  reason: string;
+  actorIp: string;
+}
+
 @Injectable()
 export class VenuesService {
   constructor(
@@ -32,13 +37,20 @@ export class VenuesService {
     return toVenueResponseDto(venue);
   }
 
-  async create(actor: AuthPrincipal, dto: CreateVenueDto) {
+  async create(actor: AuthPrincipal, dto: CreateVenueDto, auditContext?: AdminVenueAuditContext) {
     this.assertAdmin(actor);
     this.assertValidHours(dto.availabilityHours);
-    return toVenueResponseDto(await this.repository.create(dto, actor.id));
+    return toVenueResponseDto(
+      await this.repository.create(dto, actor.id, this.validateAuditContext(auditContext)),
+    );
   }
 
-  async update(actor: AuthPrincipal, venueId: string, dto: UpdateVenueDto) {
+  async update(
+    actor: AuthPrincipal,
+    venueId: string,
+    dto: UpdateVenueDto,
+    auditContext?: AdminVenueAuditContext,
+  ) {
     this.assertAdmin(actor);
     if (Object.keys(dto).length === 0) {
       throw new BadRequestException('At least one venue field must be provided.');
@@ -46,16 +58,25 @@ export class VenuesService {
     if (dto.availabilityHours) {
       this.assertValidHours(dto.availabilityHours);
     }
-    const venue = await this.repository.update(venueId, dto, actor.id);
+    const venue = await this.repository.update(
+      venueId,
+      dto,
+      actor.id,
+      this.validateAuditContext(auditContext),
+    );
     if (!venue || venue.deletedAt) {
       throw new NotFoundException('Venue not found.');
     }
     return toVenueResponseDto(venue);
   }
 
-  async retire(actor: AuthPrincipal, venueId: string) {
+  async retire(actor: AuthPrincipal, venueId: string, auditContext?: AdminVenueAuditContext) {
     this.assertAdmin(actor);
-    const venue = await this.repository.retire(venueId, actor.id);
+    const venue = await this.repository.retire(
+      venueId,
+      actor.id,
+      this.validateAuditContext(auditContext),
+    );
     if (!venue || venue.deletedAt) {
       throw new NotFoundException('Venue not found.');
     }
@@ -91,6 +112,17 @@ export class VenuesService {
     if (actor.role !== 'ADMIN') {
       throw new ForbiddenException();
     }
+  }
+
+  private validateAuditContext(
+    context: AdminVenueAuditContext | undefined,
+  ): AdminVenueAuditContext | undefined {
+    if (!context) return undefined;
+    const reason = context.reason.trim();
+    if (!reason || reason.length > 1000) {
+      throw new BadRequestException('A reason between 1 and 1000 characters is required.');
+    }
+    return { ...context, reason };
   }
 
   private assertValidHours(

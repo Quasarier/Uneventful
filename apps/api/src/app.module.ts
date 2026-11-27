@@ -9,6 +9,9 @@ import { HealthService } from './health.service';
 import { RsvpsModule } from './rsvps/rsvps.module';
 import { VenuesModule } from './venues/venues.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { AnalyticsModule } from './analytics/analytics.module';
+import { AdminModule } from './admin/admin.module';
+import { ClubsModule } from './clubs/clubs.module';
 
 @Module({
   imports: [
@@ -18,6 +21,9 @@ import { NotificationsModule } from './notifications/notifications.module';
     RsvpsModule,
     VenuesModule,
     NotificationsModule,
+    AnalyticsModule,
+    AdminModule,
+    ClubsModule,
     DatabaseModule,
   ],
   controllers: [AppController],

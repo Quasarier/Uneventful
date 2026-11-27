@@ -88,7 +88,9 @@ export type AuthRateLimitScope =
   | 'notification-unsubscribe-ip'
   | 'analytics-user'
   | 'analytics-export-user'
-  | 'recommendation-user';
+  | 'recommendation-user'
+  | 'moderation-report-user'
+  | 'admin-user';
 
 export interface RateLimitMessages {
   exceeded: string;

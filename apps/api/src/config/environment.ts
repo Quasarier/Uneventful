@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isValidAdminIpAllowlist } from './ip-network';
 
 function isValidDomain(domain: string): boolean {
   const labels = domain.split('.');
@@ -52,6 +53,11 @@ const environmentSchema = z
     ANALYTICS_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(60).default(20),
     ANALYTICS_EXPORTS_PER_HOUR: z.coerce.number().int().min(1).max(10).default(3),
     RECOMMENDATIONS_MIN_SUPPORT: z.coerce.number().int().min(2).max(100).default(5),
+    ADMIN_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(30).default(10),
+    ADMIN_IP_ALLOWLIST: z.string().default('').refine(isValidAdminIpAllowlist, {
+      message: 'Must be a comma-separated list of IP addresses or CIDR networks',
+    }),
+    MODERATION_REPORTS_PER_HOUR: z.coerce.number().int().min(1).max(20).default(5),
     NOTIFICATION_EMAIL_PROVIDER: z.enum(['resend', 'local', 'test']).default('local'),
     NOTIFICATION_EMAIL_API_KEY: z.string().min(1).optional(),
     NOTIFICATION_EMAIL_FROM_ADDRESS: z.string().email().max(320).optional(),

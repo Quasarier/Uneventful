@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   EventStatus,
+  ClubVerificationStatus,
   NotificationType,
   Prisma,
   RsvpStatus,
@@ -16,7 +17,7 @@ import {
 } from '../notifications/notification-outbox';
 
 const eventInclude = {
-  club: { select: { name: true, slug: true } },
+  club: { select: { name: true, slug: true, verificationStatus: true } },
   category: { select: { name: true, slug: true } },
   venue: { select: { id: true, name: true, building: true } },
 } satisfies Prisma.EventInclude;
@@ -34,7 +35,14 @@ export class EventsRepository {
 
   isActiveClub(clubId: string): Promise<boolean> {
     return this.prisma.club
-      .findFirst({ where: { id: clubId, deletedAt: null }, select: { id: true } })
+      .findFirst({
+        where: {
+          id: clubId,
+          deletedAt: null,
+          verificationStatus: { not: ClubVerificationStatus.SUSPENDED },
+        },
+        select: { id: true },
+      })
       .then(Boolean);
   }
 

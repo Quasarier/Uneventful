@@ -5,9 +5,10 @@ import { VenueBookingsModule } from './venue-bookings.module';
 import { VenuesController } from './venues.controller';
 import { VenuesRepository } from './venues.repository';
 import { VenuesService } from './venues.service';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
-  imports: [AuthRateLimitModule, DatabaseModule, VenueBookingsModule],
+  imports: [AuthModule, AuthRateLimitModule, DatabaseModule, VenueBookingsModule],
   controllers: [VenuesController],
   providers: [VenuesRepository, VenuesService],
   exports: [VenuesService],

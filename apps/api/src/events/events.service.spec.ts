@@ -200,6 +200,13 @@ describe('EventsService authorization and workflow', () => {
               },
             ],
           },
+          {
+            club: {
+              is: {
+                verificationStatus: { not: 'SUSPENDED' },
+              },
+            },
+          },
         ],
       },
       1,
