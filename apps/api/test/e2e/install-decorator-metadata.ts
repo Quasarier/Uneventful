@@ -33,7 +33,6 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     { CheckinsService },
     { CreateEventDto },
     { CreateImageUploadDto },
-    { CreateVenueDto },
     { CreateRsvpDto },
     { E2eSessionDto },
     { E2eTestSupportController },
@@ -59,7 +58,6 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     { NotificationsService },
     { ResendEmailProvider },
     { PrismaService },
-    { RejectEventDto },
     { RolesGuard },
     { RsvpPromotionOutboxDispatcher },
     { RsvpPromotionProcessor },
@@ -69,7 +67,6 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     { SyncCheckinsDto },
     { TicketSigningService },
     { CheckVenueConflictsDto },
-    { UpdateVenueDto },
     { UpdateEventDto },
     { VenueBookingsRepository },
     { VenueBookingsService },
@@ -78,6 +75,19 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     { VenuesService },
     { UnsubscribeService },
     { VapidPushProvider },
+    { AdminAccessGuard },
+    { AdminController },
+    { AdminService },
+    { AdminPageDto, AdminAuditQueryDto },
+    { AdminReasonDto },
+    { ChangeClubVerificationDto },
+    { ResolveModerationReportDto },
+    { ListModerationReportsDto },
+    { AdminCreateVenueDto },
+    { AdminUpdateVenueDto },
+    { CreateModerationReportDto },
+    { ReportsController },
+    { ClubVerificationController },
   ] = await Promise.all([
     import('../../src/app.controller'),
     import('../../src/app.service'),
@@ -97,7 +107,6 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     import('../../src/rsvps/checkins.service'),
     import('../../src/events/dto/create-event.dto'),
     import('../../src/events/dto/create-image-upload.dto'),
-    import('../../src/venues/dto/create-venue.dto'),
     import('../../src/rsvps/dto/create-rsvp.dto'),
     import('./test-support.dto'),
     import('./test-support.controller'),
@@ -123,7 +132,6 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     import('../../src/notifications/notifications.service'),
     import('../../src/notifications/email-provider'),
     import('../../src/database/prisma.service'),
-    import('../../src/events/dto/reject-event.dto'),
     import('../../src/auth/roles.guard'),
     import('../../src/rsvps/rsvp-promotion-outbox.dispatcher'),
     import('../../src/rsvps/rsvp-promotion.processor'),
@@ -133,7 +141,6 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     import('../../src/rsvps/dto/sync-checkins.dto'),
     import('../../src/rsvps/ticket-signing.service'),
     import('../../src/venues/dto/check-venue-conflicts.dto'),
-    import('../../src/venues/dto/update-venue.dto'),
     import('../../src/events/dto/update-event.dto'),
     import('../../src/venues/venue-bookings.repository'),
     import('../../src/venues/venue-bookings.service'),
@@ -142,6 +149,19 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     import('../../src/venues/venues.service'),
     import('../../src/notifications/unsubscribe.service'),
     import('../../src/notifications/web-push-provider'),
+    import('../../src/admin/admin-access.guard'),
+    import('../../src/admin/admin.controller'),
+    import('../../src/admin/admin.service'),
+    import('../../src/admin/dto/admin-page.dto'),
+    import('../../src/admin/dto/admin-reason.dto'),
+    import('../../src/admin/dto/change-club-verification.dto'),
+    import('../../src/admin/dto/resolve-moderation-report.dto'),
+    import('../../src/admin/dto/list-moderation-reports.dto'),
+    import('../../src/admin/dto/admin-create-venue.dto'),
+    import('../../src/admin/dto/admin-update-venue.dto'),
+    import('../../src/admin/dto/create-moderation-report.dto'),
+    import('../../src/admin/reports.controller'),
+    import('../../src/clubs/club-verification.controller'),
   ]);
 
   defineConstructorTypes(AppController, [AppService, HealthService]);
@@ -178,7 +198,7 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
     EventDashboardRepository,
   ]);
   defineConstructorTypes(EventDashboardRepository, [PrismaService]);
-  defineConstructorTypes(EventsController, [EventsService, AuthRateLimitService]);
+  defineConstructorTypes(EventsController, [EventsService, AuthRateLimitService, AdminService]);
   defineConstructorTypes(EventsRepository, [PrismaService, VenueBookingsService]);
   defineConstructorTypes(EventsService, [
     EventsRepository,
@@ -225,6 +245,16 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
   defineConstructorTypes(VenueBookingsRepository, [PrismaService]);
   defineConstructorTypes(VenueBookingsService, [VenueBookingsRepository, ConfigService]);
   defineConstructorTypes(VenuesController, [VenuesService, AuthRateLimitService]);
+  defineConstructorTypes(AdminAccessGuard, [AuthService, ConfigService, AuthRateLimitService]);
+  defineConstructorTypes(AdminController, [AdminService, VenuesService]);
+  defineConstructorTypes(AdminService, [
+    PrismaService,
+    AuthRateLimitService,
+    AnalyticsCacheService,
+    VenueBookingsService,
+  ]);
+  defineConstructorTypes(ReportsController, [AdminService, ConfigService]);
+  defineConstructorTypes(ClubVerificationController, [PrismaService]);
   defineConstructorTypes(VenuesRepository, [PrismaService]);
   defineConstructorTypes(VenuesService, [VenuesRepository, VenueBookingsService]);
   defineConstructorTypes(UnsubscribeService, [PrismaService, ConfigService]);
@@ -243,8 +273,8 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
   defineMethodTypes(EventsController, 'create', [Object, CreateEventDto]);
   defineMethodTypes(EventsController, 'update', [Object, String, UpdateEventDto]);
   defineMethodTypes(EventsController, 'submit', [Object, String]);
-  defineMethodTypes(EventsController, 'approve', [Object, String]);
-  defineMethodTypes(EventsController, 'reject', [Object, String, RejectEventDto]);
+  defineMethodTypes(EventsController, 'approve', [Object, String, AdminReasonDto]);
+  defineMethodTypes(EventsController, 'reject', [Object, String, AdminReasonDto]);
   defineMethodTypes(EventsController, 'cancel', [Object, String]);
   defineMethodTypes(EventsController, 'createImageUpload', [Object, String, CreateImageUploadDto]);
   defineMethodTypes(EventsController, 'confirmImageUpload', [Object, String]);
@@ -264,9 +294,46 @@ export async function installDecoratorMetadataForTsx(): Promise<void> {
   defineMethodTypes(VenuesController, 'list', []);
   defineMethodTypes(VenuesController, 'get', [Object, String]);
   defineMethodTypes(VenuesController, 'checkConflicts', [Object, CheckVenueConflictsDto]);
-  defineMethodTypes(VenuesController, 'create', [Object, CreateVenueDto]);
-  defineMethodTypes(VenuesController, 'update', [Object, String, UpdateVenueDto]);
-  defineMethodTypes(VenuesController, 'retire', [Object, String]);
+  defineMethodTypes(VenuesController, 'create', [Object, AdminCreateVenueDto]);
+  defineMethodTypes(VenuesController, 'update', [Object, String, AdminUpdateVenueDto]);
+  defineMethodTypes(VenuesController, 'retire', [Object, String, AdminReasonDto]);
+  defineMethodTypes(AdminController, 'listApprovalQueue', [AdminPageDto]);
+  defineMethodTypes(AdminController, 'approveEvent', [Object, String, AdminReasonDto]);
+  defineMethodTypes(AdminController, 'rejectEvent', [Object, String, AdminReasonDto]);
+  defineMethodTypes(AdminController, 'listClubs', [AdminPageDto]);
+  defineMethodTypes(AdminController, 'updateClubVerification', [
+    Object,
+    String,
+    ChangeClubVerificationDto,
+  ]);
+  defineMethodTypes(AdminController, 'listVenues', []);
+  defineMethodTypes(AdminController, 'createVenue', [Object, AdminCreateVenueDto]);
+  defineMethodTypes(AdminController, 'updateVenue', [Object, String, AdminUpdateVenueDto]);
+  defineMethodTypes(AdminController, 'retireVenue', [Object, String, AdminReasonDto]);
+  defineMethodTypes(AdminController, 'searchUsers', [AdminPageDto]);
+  defineMethodTypes(AdminController, 'grantOrganizerMembership', [
+    Object,
+    String,
+    String,
+    AdminReasonDto,
+  ]);
+  defineMethodTypes(AdminController, 'revokeOrganizerMembership', [
+    Object,
+    String,
+    String,
+    AdminReasonDto,
+  ]);
+  defineMethodTypes(AdminController, 'requestAdminRoleGrant', [Object, String, AdminReasonDto]);
+  defineMethodTypes(AdminController, 'listAdminRoleGrantRequests', [AdminPageDto]);
+  defineMethodTypes(AdminController, 'approveAdminRoleGrant', [Object, String, AdminReasonDto]);
+  defineMethodTypes(AdminController, 'revokeAdminRole', [Object, String, AdminReasonDto]);
+  defineMethodTypes(AdminController, 'suspendUser', [Object, String, AdminReasonDto]);
+  defineMethodTypes(AdminController, 'reactivateUser', [Object, String, AdminReasonDto]);
+  defineMethodTypes(AdminController, 'listReports', [ListModerationReportsDto]);
+  defineMethodTypes(AdminController, 'resolveReport', [Object, String, ResolveModerationReportDto]);
+  defineMethodTypes(AdminController, 'listAuditLogs', [Object, AdminAuditQueryDto]);
+  defineMethodTypes(ReportsController, 'create', [Object, CreateModerationReportDto]);
+  defineMethodTypes(ClubVerificationController, 'getClubVerification', [Object, String]);
   defineMethodTypes(RsvpsController, 'getStatus', [Object, String]);
   defineMethodTypes(RsvpsController, 'listAttendees', [Object, String, ListEventAttendeesDto]);
   defineMethodTypes(RsvpsController, 'rsvp', [Object, String, CreateRsvpDto]);

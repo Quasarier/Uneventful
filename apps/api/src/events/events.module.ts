@@ -7,9 +7,18 @@ import { EventsRepository } from './events.repository';
 import { EventsService } from './events.service';
 import { VenueBookingsModule } from '../venues/venue-bookings.module';
 import { AnalyticsModule } from '../analytics/analytics.module';
+import { AuthModule } from '../auth/auth.module';
+import { AdminModule } from '../admin/admin.module';
 
 @Module({
-  imports: [DatabaseModule, AuthRateLimitModule, VenueBookingsModule, AnalyticsModule],
+  imports: [
+    AuthModule,
+    AdminModule,
+    DatabaseModule,
+    AuthRateLimitModule,
+    VenueBookingsModule,
+    AnalyticsModule,
+  ],
   controllers: [EventsController],
   providers: [EventsRepository, EventsService, EventImageStorageService],
 })

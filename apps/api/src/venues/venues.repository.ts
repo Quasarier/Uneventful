@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { Prisma } from '../../generated/prisma/client';
+import { EventStatus, Prisma } from '../../generated/prisma/client';
+import { isIP } from 'node:net';
 import { PrismaService } from '../database/prisma.service';
 import type { CreateVenueDto } from './dto/create-venue.dto';
 import type { UpdateVenueDto } from './dto/update-venue.dto';
@@ -13,6 +14,15 @@ const venueInclude = {
 } satisfies Prisma.VenueInclude;
 
 export type VenueRecord = Prisma.VenueGetPayload<{ include: typeof venueInclude }>;
+
+interface AdminVenueAuditContext {
+  reason: string;
+  actorIp: string;
+}
+
+function validActorIp(value: string | undefined): string | null {
+  return value && isIP(value) ? value.slice(0, 45) : null;
+}
 
 function slugify(name: string): string {
   const slug = name
@@ -63,7 +73,11 @@ export class VenuesRepository {
       .then(Boolean);
   }
 
-  async create(dto: CreateVenueDto, actorId: string): Promise<VenueRecord> {
+  async create(
+    dto: CreateVenueDto,
+    actorId: string,
+    auditContext?: AdminVenueAuditContext,
+  ): Promise<VenueRecord> {
     return this.prisma.$transaction(async (transaction) => {
       const venue = await transaction.venue.create({
         data: {
@@ -82,14 +96,33 @@ export class VenuesRepository {
         },
         include: venueInclude,
       });
-      await this.audit(transaction, actorId, 'VENUE_CREATED', venue.id, {
-        fields: ['name', 'building', 'capacity', 'bufferMinutes', 'availabilityHours'],
-      });
+      await this.audit(
+        transaction,
+        actorId,
+        'VENUE_CREATED',
+        venue.id,
+        {
+          fields: ['name', 'building', 'capacity', 'bufferMinutes', 'availabilityHours'],
+        },
+        auditContext,
+        undefined,
+        {
+          name: venue.name,
+          capacity: venue.capacity,
+          bufferMinutes: venue.bufferMinutes,
+          isActive: venue.isActive,
+        },
+      );
       return venue;
     });
   }
 
-  async update(id: string, dto: UpdateVenueDto, actorId: string): Promise<VenueRecord | null> {
+  async update(
+    id: string,
+    dto: UpdateVenueDto,
+    actorId: string,
+    auditContext?: AdminVenueAuditContext,
+  ): Promise<VenueRecord | null> {
     return this.prisma.$transaction(async (transaction) => {
       await transaction.$queryRaw<Array<{ id: string }>>`
         SELECT "id" FROM "venues" WHERE "id" = ${id}::uuid FOR UPDATE
@@ -128,14 +161,37 @@ export class VenuesRepository {
         },
         include: venueInclude,
       });
-      await this.audit(transaction, actorId, 'VENUE_UPDATED', venue.id, {
-        fields: Object.keys(dto).sort(),
-      });
+      await this.audit(
+        transaction,
+        actorId,
+        'VENUE_UPDATED',
+        venue.id,
+        { fields: Object.keys(dto).sort() },
+        auditContext,
+        {
+          name: current.name,
+          building: current.building,
+          capacity: current.capacity,
+          bufferMinutes: current.bufferMinutes,
+          isActive: current.isActive,
+        },
+        {
+          name: venue.name,
+          building: venue.building,
+          capacity: venue.capacity,
+          bufferMinutes: venue.bufferMinutes,
+          isActive: venue.isActive,
+        },
+      );
       return venue;
     });
   }
 
-  async retire(id: string, actorId: string): Promise<VenueRecord | null> {
+  async retire(
+    id: string,
+    actorId: string,
+    auditContext?: AdminVenueAuditContext,
+  ): Promise<VenueRecord | null> {
     return this.prisma.$transaction(async (transaction) => {
       await transaction.$queryRaw<Array<{ id: string }>>`
         SELECT "id" FROM "venues" WHERE "id" = ${id}::uuid FOR UPDATE
@@ -147,12 +203,34 @@ export class VenuesRepository {
       if (!venue) {
         return null;
       }
+      const futureApprovedBookings = await transaction.event.count({
+        where: {
+          venueId: id,
+          status: EventStatus.APPROVED,
+          deletedAt: null,
+          startAt: { gt: new Date() },
+        },
+      });
+      if (futureApprovedBookings > 0) {
+        throw new ConflictException(
+          'The venue cannot be retired while it has future approved events.',
+        );
+      }
       const updated = await transaction.venue.update({
         where: { id },
         data: { isActive: false },
         include: venueInclude,
       });
-      await this.audit(transaction, actorId, 'VENUE_RETIRED', id, { isActive: false });
+      await this.audit(
+        transaction,
+        actorId,
+        'VENUE_RETIRED',
+        id,
+        { isActive: false },
+        auditContext,
+        { isActive: venue.isActive },
+        { isActive: false },
+      );
       return updated;
     });
   }
@@ -169,9 +247,26 @@ export class VenuesRepository {
     action: string,
     venueId: string,
     metadata: Prisma.InputJsonValue,
+    auditContext?: AdminVenueAuditContext,
+    beforeValues?: Prisma.InputJsonObject,
+    afterValues?: Prisma.InputJsonObject,
   ): Promise<unknown> {
     return transaction.auditLog.create({
-      data: { actorId, action, entityType: 'Venue', entityId: venueId, metadata },
+      data: {
+        actorId,
+        action,
+        entityType: 'Venue',
+        entityId: venueId,
+        metadata,
+        ...(auditContext
+          ? {
+              reason: auditContext.reason.trim(),
+              actorIp: validActorIp(auditContext.actorIp),
+              ...(beforeValues ? { beforeValues } : {}),
+              ...(afterValues ? { afterValues } : {}),
+            }
+          : {}),
+      },
     });
   }
 }

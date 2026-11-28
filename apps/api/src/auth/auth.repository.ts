@@ -149,6 +149,7 @@ export class AuthRepository {
     tokenHash: string;
     expiresAt: Date;
     tokenVersion: number;
+    googleAuthenticatedAt: Date;
   }) {
     return this.prisma.refreshToken.create({ data: input });
   }
@@ -163,6 +164,7 @@ export class AuthRepository {
       tokenHash: string;
       expiresAt: Date;
       tokenVersion: number;
+      googleAuthenticatedAt: Date;
     },
     now: Date,
   ): Promise<void> {

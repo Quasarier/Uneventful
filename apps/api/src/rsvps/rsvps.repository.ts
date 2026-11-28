@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import {
+  ClubVerificationStatus,
   EventStatus,
   NotificationType,
   RsvpStatus,
@@ -30,7 +31,7 @@ import {
 type LockedUser = { id: string; role: string; is_active: boolean; deleted_at: Date | null };
 
 const myRsvpEventInclude = {
-  club: { select: { name: true, slug: true } },
+  club: { select: { name: true, slug: true, verificationStatus: true } },
   category: { select: { name: true, slug: true } },
   venue: { select: { id: true, name: true, building: true } },
 } satisfies Prisma.EventInclude;
@@ -65,7 +66,10 @@ export class RsvpsRepository {
       where: {
         userId,
         status: { in: [RsvpStatus.GOING, RsvpStatus.WAITLISTED] },
-        event: { deletedAt: null },
+        event: {
+          deletedAt: null,
+          club: { verificationStatus: { not: ClubVerificationStatus.SUSPENDED } },
+        },
       },
       orderBy: [{ event: { startAt: 'asc' } }, { createdAt: 'asc' }],
       include: {
@@ -524,6 +528,9 @@ export class RsvpsRepository {
       id: eventId,
       status: EventStatus.APPROVED,
       deletedAt: null,
+      club: {
+        is: { verificationStatus: { not: ClubVerificationStatus.SUSPENDED } },
+      },
       OR: [
         { isPublic: true },
         {

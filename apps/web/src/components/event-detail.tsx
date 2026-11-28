@@ -133,8 +133,8 @@ export function EventDetail({ eventId }: Readonly<{ eventId: string }>) {
     setFollowError('');
     try {
       const { error: responseError, response } = await createApiClient(accessToken).POST(
-        '/clubs/{id}/follow',
-        { params: { path: { id: clubId } } },
+        '/clubs/{clubId}/follow',
+        { params: { path: { clubId } } },
       );
       if (!response.ok) {
         throw new Error(errorMessage(responseError, 'The club could not be followed.'));

@@ -284,7 +284,7 @@ paths:
                 $ref: '#/components/schemas/VenueList'
     post:
       operationId: createVenue
-      summary: Create a venue (administrators only)
+      summary: Create a venue with a required administrative reason
       security:
         - bearerAuth: []
       requestBody:
@@ -292,7 +292,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateVenueRequest'
+              $ref: '#/components/schemas/AdminCreateVenueRequest'
       responses:
         '201':
           description: The created venue.
@@ -351,7 +351,7 @@ paths:
           $ref: '#/components/responses/Error'
     patch:
       operationId: updateVenue
-      summary: Update a venue (administrators only)
+      summary: Update a venue with a required administrative reason
       security:
         - bearerAuth: []
       parameters:
@@ -361,7 +361,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdateVenueRequest'
+              $ref: '#/components/schemas/AdminUpdateVenueRequest'
       responses:
         '200':
           description: The updated venue.
@@ -380,6 +380,12 @@ paths:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/VenueId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminReasonRequest'
       responses:
         '200':
           description: The retired venue.
@@ -432,6 +438,52 @@ paths:
           $ref: '#/components/responses/Error'
         '409':
           $ref: '#/components/responses/VenueConflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /events/{id}/approve:
+    post:
+      operationId: approveEvent
+      summary: Approve a pending event with a required administrator reason
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EventId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminReasonRequest'
+      responses:
+        '201':
+          description: The event was approved.
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /events/{id}/reject:
+    post:
+      operationId: rejectEvent
+      summary: Reject a pending event with a required administrator reason
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EventId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminReasonRequest'
+      responses:
+        '201':
+          description: The event was rejected.
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
         '429':
           $ref: '#/components/responses/RateLimited'
     delete:
@@ -814,7 +866,7 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/MembershipClubId'
         - $ref: '#/components/parameters/AnalyticsFrom'
         - $ref: '#/components/parameters/AnalyticsTo'
         - $ref: '#/components/parameters/AnalyticsBucket'
@@ -940,14 +992,14 @@ paths:
                     type: boolean
                     const: true
                 required: [deleted]
-  /clubs/{id}/follow:
+  /clubs/{clubId}/follow:
     post:
       operationId: followClub
       summary: Follow a club for recommendations
       security:
         - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/MembershipClubId'
       responses:
         '201':
           description: The club is followed.
@@ -959,10 +1011,539 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/ClubId'
+        - $ref: '#/components/parameters/MembershipClubId'
       responses:
         '200':
           description: The club is no longer followed.
+        '404':
+          $ref: '#/components/responses/Error'
+  /clubs/{clubId}/verification:
+    get:
+      operationId: getClubVerification
+      summary: Read verification status and its reason for an active club member
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: clubId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: The club status and administrator-provided reason.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClubVerification'
+        '404':
+          $ref: '#/components/responses/Error'
+  /reports:
+    post:
+      operationId: submitModerationReport
+      summary: Report a visible event or club
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateModerationReportRequest'
+      responses:
+        '201':
+          description: The report was submitted.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModerationReportCreated'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /admin/events/approval-queue:
+    get:
+      operationId: listAdminApprovalQueue
+      summary: List pending events for administrators
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AdminPage'
+        - $ref: '#/components/parameters/AdminLimit'
+        - $ref: '#/components/parameters/AdminSearch'
+      responses:
+        '200':
+          description: A page of pending events.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminPage'
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /admin/events/{id}/approve:
+    post:
+      operationId: approveAdminEvent
+      summary: Approve a pending event with a required reason
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EventId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminReasonRequest'
+      responses:
+        '201':
+          description: The event was approved.
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /admin/events/{id}/reject:
+    post:
+      operationId: rejectAdminEvent
+      summary: Reject a pending event with a required reason
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EventId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminReasonRequest'
+      responses:
+        '201':
+          description: The event was rejected.
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /admin/clubs:
+    get:
+      operationId: listAdminClubs
+      summary: List clubs including verification and suspension status
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AdminPage'
+        - $ref: '#/components/parameters/AdminLimit'
+        - $ref: '#/components/parameters/AdminSearch'
+      responses:
+        '200':
+          description: A page of clubs.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminPage'
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /admin/clubs/{id}/verification:
+    patch:
+      operationId: updateAdminClubVerification
+      summary: Verify, unverify, or suspend a club with a required reason
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ClubId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangeClubVerificationRequest'
+      responses:
+        '200':
+          description: The updated club verification status.
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /admin/venues:
+    get:
+      operationId: listAdminVenues
+      summary: List active and inactive venues
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: An allowlisted venue list.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminPage'
+        '404':
+          $ref: '#/components/responses/Error'
+    post:
+      operationId: createAdminVenue
+      summary: Create a venue with a required administrative reason
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminCreateVenueRequest'
+      responses:
+        '201':
+          description: The created venue.
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /admin/venues/{id}:
+    patch:
+      operationId: updateAdminVenue
+      summary: Update a venue with a required administrative reason
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/VenueId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminUpdateVenueRequest'
+      responses:
+        '200':
+          description: The updated venue.
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      operationId: retireAdminVenue
+      summary: Retire a venue only when it has no future approved bookings
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/VenueId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminReasonRequest'
+      responses:
+        '200':
+          description: The venue was retired.
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /admin/users:
+    get:
+      operationId: searchAdminUsers
+      summary: Search users with administrator-only email visibility
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AdminPage'
+        - $ref: '#/components/parameters/AdminLimit'
+        - $ref: '#/components/parameters/AdminSearch'
+      responses:
+        '200':
+          description: A page of allowlisted user profiles.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminPage'
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /admin/users/{id}/organizer-memberships/{clubId}:
+    post:
+      operationId: grantOrganizerMembership
+      summary: Grant an organizer club membership with a required reason
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/ClubId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminReasonRequest'
+      responses:
+        '201':
+          description: The membership was granted.
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      operationId: revokeOrganizerMembership
+      summary: Revoke an organizer club membership with a required reason
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/ClubId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminReasonRequest'
+      responses:
+        '200':
+          description: The membership was revoked.
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /admin/users/{id}/admin-grant-requests:
+    post:
+      operationId: requestAdminRoleGrant
+      summary: Request an administrator role grant after fresh Google sign-in
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminReasonRequest'
+      responses:
+        '201':
+          description: A time-limited two-person approval request was created.
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /admin/admin-grant-requests:
+    get:
+      operationId: listAdminRoleGrantRequests
+      summary: List pending administrator role-grant requests
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AdminPage'
+        - $ref: '#/components/parameters/AdminLimit'
+      responses:
+        '200':
+          description: A page of pending grant requests.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminPage'
+        '404':
+          $ref: '#/components/responses/Error'
+  /admin/admin-grant-requests/{id}/approve:
+    post:
+      operationId: approveAdminRoleGrant
+      summary: Approve another administrator's role grant request
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AdminGrantRequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminReasonRequest'
+      responses:
+        '201':
+          description: The target was granted the administrator role.
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+  /admin/users/{id}/admin-role/revoke:
+    post:
+      operationId: revokeAdminRole
+      summary: Revoke an administrator role with a required reason
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminReasonRequest'
+      responses:
+        '201':
+          description: The administrator role was revoked.
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+  /admin/users/{id}/suspend:
+    post:
+      operationId: suspendAdminUser
+      summary: Suspend a user with a required reason
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminReasonRequest'
+      responses:
+        '201':
+          description: The user was suspended and their sessions revoked.
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+  /admin/users/{id}/reactivate:
+    post:
+      operationId: reactivateAdminUser
+      summary: Reactivate a suspended user with a required reason
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminReasonRequest'
+      responses:
+        '201':
+          description: The user was reactivated.
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /admin/reports:
+    get:
+      operationId: listAdminReports
+      summary: List moderation reports and reporter details for administrators
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AdminPage'
+        - $ref: '#/components/parameters/AdminLimit'
+      responses:
+        '200':
+          description: A page of moderation reports.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminPage'
+        '404':
+          $ref: '#/components/responses/Error'
+  /admin/reports/{id}/resolve:
+    post:
+      operationId: resolveAdminReport
+      summary: Resolve a report with a moderation action and reason
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ModerationReportId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveModerationReportRequest'
+      responses:
+        '201':
+          description: The moderation report was resolved.
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+  /admin/audit-logs:
+    get:
+      operationId: listAdminAuditLogs
+      summary: Read and audit a bounded page of immutable administrator audit entries
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: cursor
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/AdminLimit'
+      responses:
+        '200':
+          description: A bounded page of immutable audit entries.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminAuditPage'
         '404':
           $ref: '#/components/responses/Error'
 components:
@@ -1010,6 +1591,56 @@ components:
       schema:
         type: string
         enum: [day, week]
+    AdminPage:
+      in: query
+      name: page
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    AdminLimit:
+      in: query
+      name: limit
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 25
+    AdminSearch:
+      in: query
+      name: search
+      schema:
+        type: string
+        minLength: 2
+        maxLength: 100
+    UserId:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AdminGrantRequestId:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ModerationReportId:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+        format: uuid
+    MembershipClubId:
+      in: path
+      name: clubId
+      required: true
+      schema:
+        type: string
+        format: uuid
   responses:
     Error:
       description: Request failed.
@@ -1048,6 +1679,172 @@ components:
         error:
           type: string
       required: [statusCode, message]
+    AdminReasonRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1000
+      required: [reason]
+    ChangeClubVerificationRequest:
+      allOf:
+        - $ref: '#/components/schemas/AdminReasonRequest'
+        - type: object
+          properties:
+            status:
+              type: string
+              enum: [UNVERIFIED, VERIFIED, SUSPENDED]
+          required: [status]
+    AdminCreateVenueRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 160
+        building:
+          type: [string, 'null']
+          maxLength: 160
+        capacity:
+          type: integer
+          minimum: 1
+          maximum: 100000
+        bufferMinutes:
+          type: integer
+          minimum: 0
+          maximum: 1440
+        availabilityHours:
+          type: array
+          maxItems: 7
+          items:
+            $ref: '#/components/schemas/VenueAvailabilityHour'
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1000
+      required: [name, capacity, bufferMinutes, availabilityHours, reason]
+    AdminUpdateVenueRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 2
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 160
+        building:
+          type: [string, 'null']
+          maxLength: 160
+        capacity:
+          type: integer
+          minimum: 1
+          maximum: 100000
+        bufferMinutes:
+          type: integer
+          minimum: 0
+          maximum: 1440
+        isActive:
+          type: boolean
+        availabilityHours:
+          type: array
+          maxItems: 7
+          items:
+            $ref: '#/components/schemas/VenueAvailabilityHour'
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1000
+      required: [reason]
+    CreateModerationReportRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        targetType:
+          type: string
+          enum: [EVENT, CLUB]
+        targetId:
+          type: string
+          format: uuid
+        reason:
+          type: string
+          enum: [SPAM, HARASSMENT, UNSAFE, MISLEADING, OTHER]
+        note:
+          type: string
+          maxLength: 1000
+      required: [targetType, targetId, reason]
+    ResolveModerationReportRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        action:
+          type: string
+          enum: [DISMISS, HIDE_EVENT, CANCEL_EVENT, SUSPEND_CLUB]
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1000
+      required: [action, reason]
+    AdminPage:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+        totalPages:
+          type: integer
+      required: [data]
+    AdminAuditPage:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        nextCursor:
+          type: [string, 'null']
+      required: [data, nextCursor]
+    ClubVerification:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        verificationStatus:
+          type: string
+          enum: [UNVERIFIED, VERIFIED, SUSPENDED]
+        verificationReason:
+          type: [string, 'null']
+        updatedAt:
+          type: string
+          format: date-time
+      required: [id, verificationStatus, verificationReason, updatedAt]
+    ModerationReportCreated:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          const: OPEN
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, status, createdAt]
     AnalyticsPeriod:
       type: object
       additionalProperties: false

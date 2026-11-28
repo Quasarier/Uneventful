@@ -13,15 +13,18 @@ import {
   Post,
   Req,
   UnauthorizedException,
+  UseGuards,
 } from '@nestjs/common';
 import { UserRole } from '../../generated/prisma/client';
 import { AuthRateLimitService, type RateLimitMessages } from '../auth/auth-rate-limit.service';
-import { Roles } from '../auth/auth.decorators';
+import { AdminOnly, Roles } from '../auth/auth.decorators';
+import { AdminAccessGuard } from '../admin/admin-access.guard';
 import type { AuthenticatedRequest, AuthPrincipal } from '../auth/auth.types';
 import { CheckVenueConflictsDto } from './dto/check-venue-conflicts.dto';
-import { CreateVenueDto } from './dto/create-venue.dto';
-import { UpdateVenueDto } from './dto/update-venue.dto';
 import { VenuesService } from './venues.service';
+import { AdminCreateVenueDto } from '../admin/dto/admin-create-venue.dto';
+import { AdminUpdateVenueDto } from '../admin/dto/admin-update-venue.dto';
+import { AdminReasonDto } from '../admin/dto/admin-reason.dto';
 
 const venueConflictRateLimit: RateLimitMessages = {
   exceeded: 'Too many venue conflict checks. Try again later.',
@@ -76,31 +79,49 @@ export class VenuesController {
   }
 
   @Post()
-  @Roles(UserRole.ADMIN)
-  async create(@Req() request: AuthenticatedRequest, @Body() dto: CreateVenueDto) {
+  @AdminOnly()
+  @UseGuards(AdminAccessGuard)
+  async create(@Req() request: AuthenticatedRequest, @Body() dto: AdminCreateVenueDto) {
     const principal = requirePrincipal(request);
     await this.consumeWriteLimit(principal);
-    return this.venues.create(principal, dto);
+    const { reason, ...venue } = dto;
+    return this.venues.create(principal, venue, {
+      reason,
+      actorIp: request.ip || request.socket.remoteAddress || '',
+    });
   }
 
   @Patch(':id')
-  @Roles(UserRole.ADMIN)
+  @AdminOnly()
+  @UseGuards(AdminAccessGuard)
   async update(
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: UpdateVenueDto,
+    @Body() dto: AdminUpdateVenueDto,
   ) {
     const principal = requirePrincipal(request);
     await this.consumeWriteLimit(principal);
-    return this.venues.update(principal, id, dto);
+    const { reason, ...venue } = dto;
+    return this.venues.update(principal, id, venue, {
+      reason,
+      actorIp: request.ip || request.socket.remoteAddress || '',
+    });
   }
 
   @Delete(':id')
-  @Roles(UserRole.ADMIN)
-  async retire(@Req() request: AuthenticatedRequest, @Param('id', ParseUUIDPipe) id: string) {
+  @AdminOnly()
+  @UseGuards(AdminAccessGuard)
+  async retire(
+    @Req() request: AuthenticatedRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminReasonDto,
+  ) {
     const principal = requirePrincipal(request);
     await this.consumeWriteLimit(principal);
-    return this.venues.retire(principal, id);
+    return this.venues.retire(principal, id, {
+      reason: dto.reason,
+      actorIp: request.ip || request.socket.remoteAddress || '',
+    });
   }
 
   private consumeWriteLimit(principal: AuthPrincipal): Promise<void> {

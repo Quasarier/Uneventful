@@ -47,6 +47,14 @@ enum EventStatus {
   @@map("event_status")
 }
 
+enum ClubVerificationStatus {
+  UNVERIFIED
+  VERIFIED
+  SUSPENDED
+
+  @@map("club_verification_status")
+}
+
 enum VenueBookingStatus {
   PENDING
   APPROVED
@@ -101,8 +109,52 @@ enum NotificationType {
   EVENT_REMINDER_24H
   EVENT_REMINDER_1H
   VENUE_BOOKING_UPDATED
+  ACCOUNT_ROLE_CHANGED
+  ACCOUNT_SUSPENDED
+  ACCOUNT_REACTIVATED
 
   @@map("notification_type")
+}
+
+enum ModerationTargetType {
+  EVENT
+  CLUB
+
+  @@map("moderation_target_type")
+}
+
+enum ModerationReportReason {
+  SPAM
+  HARASSMENT
+  UNSAFE
+  MISLEADING
+  OTHER
+
+  @@map("moderation_report_reason")
+}
+
+enum ModerationReportStatus {
+  OPEN
+  RESOLVED
+
+  @@map("moderation_report_status")
+}
+
+enum ModerationAction {
+  DISMISS
+  HIDE_EVENT
+  CANCEL_EVENT
+  SUSPEND_CLUB
+
+  @@map("moderation_action")
+}
+
+enum AdminRoleGrantStatus {
+  PENDING
+  APPROVED
+  EXPIRED
+
+  @@map("admin_role_grant_status")
 }
 
 enum NotificationChannel {
@@ -162,6 +214,11 @@ model User {
   recommendationConsents   RecommendationConsent[]
   auditLogs                AuditLog[]
   refreshTokens            RefreshToken[]
+  reportedContent          ModerationReport[]        @relation("ReportReporter")
+  resolvedReports          ModerationReport[]        @relation("ReportResolver")
+  requestedAdminGrants     AdminRoleGrantRequest[]   @relation("AdminGrantRequester")
+  approvedAdminGrants      AdminRoleGrantRequest[]   @relation("AdminGrantApprover")
+  targetedAdminGrants      AdminRoleGrantRequest[]   @relation("AdminGrantTarget")
 
   @@index([role, isActive])
   @@index([deletedAt])
@@ -169,18 +226,21 @@ model User {
 }
 
 model Club {
-  id          String           @id @default(uuid()) @db.Uuid
-  name        String           @db.VarChar(160)
-  slug        String           @db.VarChar(180)
-  description String?          @db.Text
-  createdById String           @map("created_by_id") @db.Uuid
-  deletedAt   DateTime?        @map("deleted_at") @db.Timestamptz(3)
-  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt   DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
-  createdBy   User             @relation("ClubCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  memberships ClubMembership[]
-  events      Event[]
-  followers   ClubFollow[]
+  id                 String                 @id @default(uuid()) @db.Uuid
+  name               String                 @db.VarChar(160)
+  slug               String                 @db.VarChar(180)
+  description        String?                @db.Text
+  verificationStatus ClubVerificationStatus @default(UNVERIFIED) @map("verification_status")
+  verificationReason String?                @map("verification_reason") @db.VarChar(1000)
+  suspendedAt        DateTime?              @map("suspended_at") @db.Timestamptz(3)
+  createdById        String                 @map("created_by_id") @db.Uuid
+  deletedAt          DateTime?              @map("deleted_at") @db.Timestamptz(3)
+  createdAt          DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime               @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdBy          User                   @relation("ClubCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  memberships        ClubMembership[]
+  events             Event[]
+  followers          ClubFollow[]
 
   @@index([createdById])
   @@index([deletedAt])
@@ -217,7 +277,7 @@ model ClubMembership {
   @@unique([clubId, userId])
   @@index([userId, status])
   @@index([clubId, status])
-  @@index([clubId, status, joinedAt])
+  @@index([clubId, status, joinedAt], map: "club_memberships_club_status_joined_analytics_idx")
   @@map("club_memberships")
 }
 
@@ -326,6 +386,8 @@ model Event {
   @@index([startAt])
   @@index([status, startAt])
   @@index([clubId, startAt])
+  @@index([clubId, status, startAt], map: "events_club_status_start_idx")
+  @@index([venueId, startAt], map: "events_venue_id_start_at_idx")
   @@index([categoryId, startAt])
   @@index([createdById, createdAt])
   @@index([deletedAt])
@@ -370,7 +432,7 @@ model Rsvp {
 
   @@unique([eventId, userId])
   @@index([eventId, status, createdAt])
-  @@index([eventId, createdAt, status])
+  @@index([eventId, createdAt, status], map: "rsvps_event_created_status_analytics_idx")
   @@index([userId, status, createdAt])
   @@map("rsvps")
 }
@@ -417,6 +479,7 @@ model CheckIn {
   checkedInBy   User          @relation("CheckInActor", fields: [checkedInById], references: [id], onDelete: Restrict)
 
   @@index([checkedInById, checkedInAt])
+  @@index([checkedInAt], map: "check_ins_checked_in_at_idx")
   @@map("check_ins")
 }
 
@@ -528,16 +591,20 @@ model RecommendationConsent {
 }
 
 model AuditLog {
-  id         String   @id @default(uuid()) @db.Uuid
-  actorId    String?  @map("actor_id") @db.Uuid
-  action     String   @db.VarChar(128)
-  entityType String   @map("entity_type") @db.VarChar(64)
-  entityId   String?  @map("entity_id") @db.Uuid
-  requestId  String?  @map("request_id") @db.VarChar(128)
-  metadata   Json?    @db.JsonB
-  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt  DateTime @default(now()) @map("updated_at") @db.Timestamptz(3)
-  actor      User?    @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  id           String   @id @default(uuid()) @db.Uuid
+  actorId      String?  @map("actor_id") @db.Uuid
+  action       String   @db.VarChar(128)
+  entityType   String   @map("entity_type") @db.VarChar(64)
+  entityId     String?  @map("entity_id") @db.Uuid
+  requestId    String?  @map("request_id") @db.VarChar(128)
+  reason       String?  @db.VarChar(1000)
+  beforeValues Json?    @map("before_values") @db.JsonB
+  afterValues  Json?    @map("after_values") @db.JsonB
+  actorIp      String?  @map("actor_ip") @db.VarChar(45)
+  metadata     Json?    @db.JsonB
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @default(now()) @map("updated_at") @db.Timestamptz(3)
+  actor        User?    @relation(fields: [actorId], references: [id], onDelete: Restrict)
 
   @@index([actorId, createdAt])
   @@index([entityType, entityId, createdAt])
@@ -545,20 +612,63 @@ model AuditLog {
   @@map("audit_logs")
 }
 
+model ModerationReport {
+  id               String                 @id @default(uuid()) @db.Uuid
+  reporterId       String                 @map("reporter_id") @db.Uuid
+  targetType       ModerationTargetType   @map("target_type")
+  targetId         String                 @map("target_id") @db.Uuid
+  openKey          String?                @unique @map("open_key") @db.VarChar(240)
+  reason           ModerationReportReason
+  note             String?                @db.VarChar(1000)
+  status           ModerationReportStatus @default(OPEN)
+  resolutionAction ModerationAction?      @map("resolution_action")
+  resolutionReason String?                @map("resolution_reason") @db.VarChar(1000)
+  resolvedById     String?                @map("resolved_by_id") @db.Uuid
+  createdAt        DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  resolvedAt       DateTime?              @map("resolved_at") @db.Timestamptz(3)
+  reporter         User                   @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: Restrict)
+  resolvedBy       User?                  @relation("ReportResolver", fields: [resolvedById], references: [id], onDelete: Restrict)
+
+  @@index([status, createdAt, id])
+  @@index([targetType, targetId, status])
+  @@map("moderation_reports")
+}
+
+model AdminRoleGrantRequest {
+  id             String               @id @default(uuid()) @db.Uuid
+  targetUserId   String               @map("target_user_id") @db.Uuid
+  requestedById  String               @map("requested_by_id") @db.Uuid
+  approvedById   String?              @map("approved_by_id") @db.Uuid
+  status         AdminRoleGrantStatus @default(PENDING)
+  reason         String               @db.VarChar(1000)
+  approvalReason String?              @map("approval_reason") @db.VarChar(1000)
+  expiresAt      DateTime             @map("expires_at") @db.Timestamptz(3)
+  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  resolvedAt     DateTime?            @map("resolved_at") @db.Timestamptz(3)
+  target         User                 @relation("AdminGrantTarget", fields: [targetUserId], references: [id], onDelete: Restrict)
+  requestedBy    User                 @relation("AdminGrantRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+  approvedBy     User?                @relation("AdminGrantApprover", fields: [approvedById], references: [id], onDelete: Restrict)
+
+  @@index([status, expiresAt])
+  @@index([targetUserId, createdAt])
+  @@map("admin_role_grant_requests")
+}
+
 model RefreshToken {
-  id           String        @id @default(uuid()) @db.Uuid
-  userId       String        @map("user_id") @db.Uuid
-  familyId     String        @map("family_id") @db.Uuid
-  tokenHash    String        @unique @map("token_hash") @db.Char(64)
-  expiresAt    DateTime      @map("expires_at") @db.Timestamptz(3)
-  revokedAt    DateTime?     @map("revoked_at") @db.Timestamptz(3)
-  tokenVersion Int           @default(0) @map("token_version")
-  replacedById String?       @unique @map("replaced_by_id") @db.Uuid
-  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt    DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
-  user         User          @relation(fields: [userId], references: [id], onDelete: Restrict)
-  replacedBy   RefreshToken? @relation("RefreshTokenRotation", fields: [replacedById], references: [id], onDelete: Restrict)
-  replaces     RefreshToken? @relation("RefreshTokenRotation")
+  id                    String        @id @default(uuid()) @db.Uuid
+  userId                String        @map("user_id") @db.Uuid
+  familyId              String        @map("family_id") @db.Uuid
+  tokenHash             String        @unique @map("token_hash") @db.Char(64)
+  expiresAt             DateTime      @map("expires_at") @db.Timestamptz(3)
+  revokedAt             DateTime?     @map("revoked_at") @db.Timestamptz(3)
+  tokenVersion          Int           @default(0) @map("token_version")
+  googleAuthenticatedAt DateTime      @default(now()) @map("google_authenticated_at") @db.Timestamptz(3)
+  replacedById          String?       @unique @map("replaced_by_id") @db.Uuid
+  createdAt             DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  user                  User          @relation(fields: [userId], references: [id], onDelete: Restrict)
+  replacedBy            RefreshToken? @relation("RefreshTokenRotation", fields: [replacedById], references: [id], onDelete: Restrict)
+  replaces              RefreshToken? @relation("RefreshTokenRotation")
 
   @@index([userId, familyId, expiresAt])
   @@index([userId, revokedAt])

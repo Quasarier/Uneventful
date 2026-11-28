@@ -3,7 +3,13 @@ import { Module, ValidationPipe, type INestApplication } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { Reflector } from '@nestjs/core';
 import { EventStatus } from '../generated/prisma/client';
-import { AuthService } from '../src/auth/auth.service';
+import { AdminAccessGuard } from '../src/admin/admin-access.guard';
+import { AdminService } from '../src/admin/admin.service';
+import { AdminReasonDto } from '../src/admin/dto/admin-reason.dto';
+import { AdminCreateVenueDto } from '../src/admin/dto/admin-create-venue.dto';
+import { AdminUpdateVenueDto } from '../src/admin/dto/admin-update-venue.dto';
+import { AnalyticsCacheService } from '../src/analytics/analytics-cache.service';
+import { AuthService, type AuthenticatedAccessSession } from '../src/auth/auth.service';
 import {
   AuthRateLimitExceededException,
   AuthRateLimitService,
@@ -24,13 +30,18 @@ import { VenuesService } from '../src/venues/venues.service';
 import { CreateEventDto } from '../src/events/dto/create-event.dto';
 import { CreateEventSeriesDto } from '../src/venues/dto/create-event-series.dto';
 import { CreateImageUploadDto } from '../src/events/dto/create-image-upload.dto';
-import { RejectEventDto } from '../src/events/dto/reject-event.dto';
 import { UpdateEventDto } from '../src/events/dto/update-event.dto';
 import { HttpExceptionFilter } from '../src/http-exception.filter';
 import type { AuthPrincipal } from '../src/auth/auth.types';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+Reflect.defineMetadata(
+  'design:paramtypes',
+  [AuthService, ConfigService, AuthRateLimitService],
+  AdminAccessGuard,
+);
 
 Reflect.defineMetadata(
   'design:paramtypes',
@@ -52,9 +63,33 @@ Reflect.defineMetadata(
 );
 Reflect.defineMetadata(
   'design:paramtypes',
-  [Object, String, RejectEventDto],
+  [Object, String, AdminReasonDto],
   EventsController.prototype,
   'reject',
+);
+Reflect.defineMetadata(
+  'design:paramtypes',
+  [Object, String, AdminReasonDto],
+  EventsController.prototype,
+  'approve',
+);
+Reflect.defineMetadata(
+  'design:paramtypes',
+  [Object, AdminCreateVenueDto],
+  VenuesController.prototype,
+  'create',
+);
+Reflect.defineMetadata(
+  'design:paramtypes',
+  [Object, String, AdminUpdateVenueDto],
+  VenuesController.prototype,
+  'update',
+);
+Reflect.defineMetadata(
+  'design:paramtypes',
+  [Object, String, AdminReasonDto],
+  VenuesController.prototype,
+  'retire',
 );
 Reflect.defineMetadata(
   'design:paramtypes',
@@ -137,6 +172,12 @@ const authStub = {
     }
     return principal;
   },
+  authenticateAccessTokenSession: async (token: string): Promise<AuthenticatedAccessSession> => ({
+    principal: await authStub.authenticateAccessToken(token),
+    familyId: randomUUID(),
+    expiresAt: Date.now() + 60_000,
+  }),
+  isAccessSessionActive: async () => true,
 };
 
 let activePrisma: PrismaService;
@@ -171,6 +212,7 @@ let activePrisma: PrismaService;
     },
     { provide: EventImageStorageService, useFactory: () => imageStorageStub },
     { provide: AuthRateLimitService, useFactory: () => rateLimitStub },
+    { provide: ConfigService, useFactory: () => configFor(appDatabaseUrl!) },
     {
       provide: EventsService,
       useFactory: (
@@ -179,6 +221,30 @@ let activePrisma: PrismaService;
         bookings: VenueBookingsService,
       ) => new EventsService(repository, storage, bookings),
       inject: [EventsRepository, EventImageStorageService, VenueBookingsService],
+    },
+    {
+      provide: AnalyticsCacheService,
+      useValue: { invalidateEvent: vi.fn().mockResolvedValue(undefined) },
+    },
+    {
+      provide: AdminService,
+      useFactory: (analyticsCache: AnalyticsCacheService, bookings: VenueBookingsService) =>
+        new AdminService(
+          activePrisma,
+          rateLimitStub as unknown as AuthRateLimitService,
+          analyticsCache,
+          bookings,
+        ),
+      inject: [AnalyticsCacheService, VenueBookingsService],
+    },
+    {
+      provide: AdminAccessGuard,
+      useFactory: (
+        auth: AuthService,
+        config: ConfigService<Environment, true>,
+        rateLimit: AuthRateLimitService,
+      ) => new AdminAccessGuard(auth, config, rateLimit),
+      inject: [AuthService, ConfigService, AuthRateLimitService],
     },
     { provide: AuthService, useValue: authStub },
   ],
@@ -665,6 +731,7 @@ describe('events PostgreSQL/HTTP integration', () => {
         method: 'POST',
         path: (id) => `/events/${id}/approve`,
         hiddenId: deletedEventId,
+        body: { reason: 'Reviewed and not eligible for approval.' },
       },
       {
         name: 'reject',
@@ -732,8 +799,10 @@ describe('events PostgreSQL/HTTP integration', () => {
         createdById: principals.get('organizer')!.id,
         status: EventStatus.PENDING_APPROVAL,
       });
-      const approve = await request(role, 'POST', `/events/${pendingId}/approve`);
-      expect(approve.status).toBe(role === 'admin' ? 201 : 403);
+      const approve = await request(role, 'POST', `/events/${pendingId}/approve`, {
+        reason: 'Reviewed for campus policy.',
+      });
+      expect(approve.status).toBe(role === 'admin' ? 201 : 404);
 
       const rejectedId = await createEvent({
         clubId,
@@ -743,7 +812,7 @@ describe('events PostgreSQL/HTTP integration', () => {
       const reject = await request(role, 'POST', `/events/${rejectedId}/reject`, {
         reason: 'Please update the event details.',
       });
-      expect(reject.status).toBe(role === 'admin' ? 201 : 403);
+      expect(reject.status).toBe(role === 'admin' ? 201 : 404);
     }
 
     const adminId = principals.get('admin')!.id;
@@ -752,7 +821,13 @@ describe('events PostgreSQL/HTTP integration', () => {
       createdById: adminId,
       status: EventStatus.PENDING_APPROVAL,
     });
-    expect((await request('admin', 'POST', `/events/${ownSubmission}/approve`)).status).toBe(403);
+    expect(
+      (
+        await request('admin', 'POST', `/events/${ownSubmission}/approve`, {
+          reason: 'Review found a conflict.',
+        })
+      ).status,
+    ).toBe(404);
     expect((await appPrisma.event.findUniqueOrThrow({ where: { id: ownSubmission } })).status).toBe(
       EventStatus.PENDING_APPROVAL,
     );
@@ -866,8 +941,8 @@ describe('events PostgreSQL/HTTP integration', () => {
       venuePayload('Organizer'),
     );
     const studentCreate = await request('student', 'POST', '/venues', venuePayload('Student'));
-    expect(organizerCreate.status).toBe(403);
-    expect(studentCreate.status).toBe(403);
+    expect(organizerCreate.status).toBe(404);
+    expect(studentCreate.status).toBe(404);
 
     const venue = await createVenue('Restricted Venue');
     const body = (await venue.json()) as Record<string, unknown> & { id: string };
@@ -888,11 +963,14 @@ describe('events PostgreSQL/HTTP integration', () => {
       expect(
         (await request(role, 'PATCH', `/venues/${body.id}`, { name: 'Unauthorized change' }))
           .status,
-      ).toBe(403);
-      expect((await request(role, 'DELETE', `/venues/${body.id}`)).status).toBe(403);
+      ).toBe(404);
+      expect((await request(role, 'DELETE', `/venues/${body.id}`)).status).toBe(404);
     }
 
-    const retired = await request('admin', 'PATCH', `/venues/${body.id}`, { isActive: false });
+    const retired = await request('admin', 'PATCH', `/venues/${body.id}`, {
+      isActive: false,
+      reason: 'Venue closed for maintenance.',
+    });
     expect(retired.status).toBe(200);
     expect(rateLimitStub.consume).toHaveBeenCalledWith(
       'venue-write-user',
@@ -916,10 +994,46 @@ describe('events PostgreSQL/HTTP integration', () => {
 
     const audits = await appPrisma.auditLog.findMany({
       where: { entityType: 'Venue', entityId: body.id },
-      select: { action: true },
+      select: {
+        actorId: true,
+        action: true,
+        entityType: true,
+        entityId: true,
+        reason: true,
+        actorIp: true,
+        beforeValues: true,
+        afterValues: true,
+        createdAt: true,
+      },
       orderBy: { createdAt: 'asc' },
     });
     expect(audits.map(({ action }) => action)).toEqual(['VENUE_CREATED', 'VENUE_UPDATED']);
+    expect(audits[0]).toMatchObject({
+      actorId: principals.get('admin')!.id,
+      action: 'VENUE_CREATED',
+      entityType: 'Venue',
+      entityId: body.id,
+      reason: 'Integration test fixture.',
+      actorIp: '127.0.0.1',
+      afterValues: {
+        name: 'Restricted Venue',
+        capacity: 100,
+        bufferMinutes: 0,
+        isActive: true,
+      },
+    });
+    expect(audits[0]?.createdAt).toBeInstanceOf(Date);
+    expect(audits[1]).toMatchObject({
+      actorId: principals.get('admin')!.id,
+      action: 'VENUE_UPDATED',
+      entityType: 'Venue',
+      entityId: body.id,
+      reason: 'Venue closed for maintenance.',
+      actorIp: '127.0.0.1',
+      beforeValues: { isActive: true },
+      afterValues: { isActive: false },
+    });
+    expect(audits[1]?.createdAt).toBeInstanceOf(Date);
   });
 
   it('reports safe booking conflicts and excludes occupied or inactive venues from alternatives', async () => {
@@ -935,7 +1049,10 @@ describe('events PostgreSQL/HTTP integration', () => {
     const inactiveResponse = await createVenue('Inactive Alternative');
     const inactiveVenue = (await inactiveResponse.json()) as { id: string };
     venueIds.push(inactiveVenue.id);
-    await request('admin', 'PATCH', `/venues/${inactiveVenue.id}`, { isActive: false });
+    await request('admin', 'PATCH', `/venues/${inactiveVenue.id}`, {
+      isActive: false,
+      reason: 'Venue closed for maintenance.',
+    });
 
     const event = await createApiEvent({ title: 'Original booking', venueId: venue.id });
     const occupiedEvent = await createApiEvent({
@@ -1092,7 +1209,13 @@ describe('events PostgreSQL/HTTP integration', () => {
       JSON.stringify(updateResults),
     ).toHaveLength(19);
     const winningEvent = events[updates.findIndex(({ status }) => status === 200)]!;
-    expect((await request('admin', 'POST', `/events/${winningEvent.id}/approve`)).status).toBe(201);
+    expect(
+      (
+        await request('admin', 'POST', `/events/${winningEvent.id}/approve`, {
+          reason: 'Booking confirmed.',
+        })
+      ).status,
+    ).toBe(201);
 
     const approvedBookings = await appPrisma.venueBooking.count({
       where: {
@@ -1322,7 +1445,10 @@ describe('events PostgreSQL/HTTP integration', () => {
     expect(past.status).toBe(409);
     expect((await past.json()).reasons).toContain('PAST_START');
 
-    await request('admin', 'PATCH', `/venues/${bufferedVenue.id}`, { isActive: false });
+    await request('admin', 'PATCH', `/venues/${bufferedVenue.id}`, {
+      isActive: false,
+      reason: 'Venue closed for maintenance.',
+    });
     const inactive = await request('organizer', 'POST', '/venues/conflicts', {
       venueId: bufferedVenue.id,
       startAt: '2035-02-02T15:00:00.000Z',
@@ -1405,6 +1531,7 @@ function venuePayload(
 ) {
   return {
     name,
+    reason: 'Integration test fixture.',
     building: 'Student Union',
     capacity: overrides.capacity ?? 100,
     bufferMinutes: overrides.bufferMinutes ?? 0,

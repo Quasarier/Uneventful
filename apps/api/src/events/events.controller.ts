@@ -12,19 +12,22 @@ import {
   Req,
   Res,
   UnauthorizedException,
+  UseGuards,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { UserRole } from '../../generated/prisma/client';
-import { Roles } from '../auth/auth.decorators';
+import { AdminOnly, Roles } from '../auth/auth.decorators';
+import { AdminAccessGuard } from '../admin/admin-access.guard';
 import { AuthRateLimitService, type RateLimitMessages } from '../auth/auth-rate-limit.service';
 import type { AuthenticatedRequest, AuthPrincipal } from '../auth/auth.types';
 import { CreateEventDto } from './dto/create-event.dto';
 import { CreateImageUploadDto } from './dto/create-image-upload.dto';
 import { ListEventsDto } from './dto/list-events.dto';
-import { RejectEventDto } from './dto/reject-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import { CreateEventSeriesDto } from '../venues/dto/create-event-series.dto';
 import { EventsService } from './events.service';
+import { AdminService } from '../admin/admin.service';
+import { AdminReasonDto } from '../admin/dto/admin-reason.dto';
 
 function requirePrincipal(request: AuthenticatedRequest): AuthPrincipal {
   if (!request.user) {
@@ -50,6 +53,8 @@ export class EventsController {
     private readonly events: EventsService,
     @Inject(AuthRateLimitService)
     private readonly rateLimit: AuthRateLimitService,
+    @Inject(AdminService)
+    private readonly admin: AdminService,
   ) {}
 
   @Get()
@@ -99,23 +104,39 @@ export class EventsController {
   }
 
   @Post(':id/approve')
-  @Roles(UserRole.ADMIN)
-  async approve(@Req() request: AuthenticatedRequest, @Param('id', ParseUUIDPipe) id: string) {
-    const principal = requirePrincipal(request);
-    await this.consumeBookingWriteLimit(principal);
-    return this.events.approve(principal, id);
-  }
-
-  @Post(':id/reject')
-  @Roles(UserRole.ADMIN)
-  async reject(
+  @AdminOnly()
+  @UseGuards(AdminAccessGuard)
+  async approve(
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: RejectEventDto,
+    @Body() dto: AdminReasonDto,
   ) {
     const principal = requirePrincipal(request);
     await this.consumeBookingWriteLimit(principal);
-    return this.events.reject(principal, id, dto);
+    return this.admin.approveEvent(
+      principal,
+      id,
+      dto.reason,
+      request.ip || request.socket.remoteAddress || '',
+    );
+  }
+
+  @Post(':id/reject')
+  @AdminOnly()
+  @UseGuards(AdminAccessGuard)
+  async reject(
+    @Req() request: AuthenticatedRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminReasonDto,
+  ) {
+    const principal = requirePrincipal(request);
+    await this.consumeBookingWriteLimit(principal);
+    return this.admin.rejectEvent(
+      principal,
+      id,
+      dto.reason,
+      request.ip || request.socket.remoteAddress || '',
+    );
   }
 
   @Post(':id/cancel')

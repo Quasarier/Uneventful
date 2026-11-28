@@ -54,29 +54,62 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --verify-store-integrity
 
+      - name: Generate disposable test credentials
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const { randomBytes } = require('node:crypto');
+          const values = {
+            E2E_APP_DB_PASSWORD: randomBytes(24).toString('base64url'),
+            E2E_MIGRATOR_DB_PASSWORD: randomBytes(24).toString('base64url'),
+            E2E_S3_ACCESS_KEY: `e2e${randomBytes(12).toString('hex')}`,
+            E2E_S3_SECRET_KEY: randomBytes(32).toString('hex'),
+            E2E_TEST_AUTH_BYPASS_SECRET: randomBytes(32).toString('base64url'),
+          };
+          fs.appendFileSync(
+            process.env.GITHUB_ENV,
+            Object.entries(values).map(([key, value]) => `${key}=${value}\n`).join(''),
+            { mode: 0o600 }
+          );
+          for (const value of Object.values(values)) {
+            console.log(`::add-mask::${value}`);
+          }
+          NODE
+
       - name: Provision separate migration and application roles
         run: psql "$BOOTSTRAP_DATABASE_URL" -v ON_ERROR_STOP=1 -f apps/api/prisma/provision-roles.sql
         env:
           BOOTSTRAP_DATABASE_URL: postgresql://uneventful_ci_bootstrap:test-only@localhost:5432/uneventful_ci
-          UNEVENTFUL_MIGRATOR_DB_PASSWORD: test-migrator
-          UNEVENTFUL_APP_DB_PASSWORD: test-app
+          UNEVENTFUL_MIGRATOR_DB_PASSWORD: ${{ env.E2E_MIGRATOR_DB_PASSWORD }}
+          UNEVENTFUL_APP_DB_PASSWORD: ${{ env.E2E_APP_DB_PASSWORD }}
 
       - name: Validate Prisma schema and generate client
         run: |
           pnpm --filter @uneventful/api db:validate
           pnpm --filter @uneventful/api db:generate
         env:
-          DATABASE_URL: postgresql://uneventful_app:test-app@localhost:5432/uneventful_ci?schema=public
-          MIGRATION_DATABASE_URL: postgresql://uneventful_migrator:test-migrator@localhost:5432/uneventful_ci?schema=public
+          DATABASE_URL: postgresql://uneventful_app:${{ env.E2E_APP_DB_PASSWORD }}@localhost:5432/uneventful_ci?schema=public
+          MIGRATION_DATABASE_URL: postgresql://uneventful_migrator:${{ env.E2E_MIGRATOR_DB_PASSWORD }}@localhost:5432/uneventful_ci?schema=public
           NODE_ENV: test
 
-      - name: Apply migrations and seed test data
+      - name: Apply migrations and verify Prisma schema
         run: |
           pnpm --filter @uneventful/api db:deploy
-          pnpm --filter @uneventful/api db:seed
+          pnpm --filter @uneventful/api exec prisma migrate diff \
+            --from-migrations prisma/migrations \
+            --to-schema prisma/schema.prisma \
+            --exit-code
         env:
-          DATABASE_URL: postgresql://uneventful_app:test-app@localhost:5432/uneventful_ci?schema=public
-          MIGRATION_DATABASE_URL: postgresql://uneventful_migrator:test-migrator@localhost:5432/uneventful_ci?schema=public
+          DATABASE_URL: postgresql://uneventful_app:${{ env.E2E_APP_DB_PASSWORD }}@localhost:5432/uneventful_ci?schema=public
+          MIGRATION_DATABASE_URL: postgresql://uneventful_migrator:${{ env.E2E_MIGRATOR_DB_PASSWORD }}@localhost:5432/uneventful_ci?schema=public
+          SHADOW_DATABASE_URL: postgresql://uneventful_migrator:${{ env.E2E_MIGRATOR_DB_PASSWORD }}@localhost:5432/uneventful_ci_shadow?schema=public
+          NODE_ENV: test
+
+      - name: Seed test data
+        run: pnpm --filter @uneventful/api db:seed
+        env:
+          DATABASE_URL: postgresql://uneventful_app:${{ env.E2E_APP_DB_PASSWORD }}@localhost:5432/uneventful_ci?schema=public
+          MIGRATION_DATABASE_URL: postgresql://uneventful_migrator:${{ env.E2E_MIGRATOR_DB_PASSWORD }}@localhost:5432/uneventful_ci?schema=public
           NODE_ENV: test
 
       - name: Format check
@@ -85,15 +118,15 @@ jobs:
       - name: Verify constraints and application-role privileges
         run: pnpm --filter @uneventful/api exec prisma db execute --file prisma/verify-constraints.sql
         env:
-          DATABASE_URL: postgresql://uneventful_app:test-app@localhost:5432/uneventful_ci?schema=public
-          MIGRATION_DATABASE_URL: postgresql://uneventful_app:test-app@localhost:5432/uneventful_ci?schema=public
+          DATABASE_URL: postgresql://uneventful_app:${{ env.E2E_APP_DB_PASSWORD }}@localhost:5432/uneventful_ci?schema=public
+          MIGRATION_DATABASE_URL: postgresql://uneventful_app:${{ env.E2E_APP_DB_PASSWORD }}@localhost:5432/uneventful_ci?schema=public
           NODE_ENV: test
 
       - name: Verify audit-log triggers as migration owner
         run: pnpm --filter @uneventful/api exec prisma db execute --file prisma/verify-audit-immutability.sql
         env:
-          DATABASE_URL: postgresql://uneventful_app:test-app@localhost:5432/uneventful_ci?schema=public
-          MIGRATION_DATABASE_URL: postgresql://uneventful_migrator:test-migrator@localhost:5432/uneventful_ci?schema=public
+          DATABASE_URL: postgresql://uneventful_app:${{ env.E2E_APP_DB_PASSWORD }}@localhost:5432/uneventful_ci?schema=public
+          MIGRATION_DATABASE_URL: postgresql://uneventful_migrator:${{ env.E2E_MIGRATOR_DB_PASSWORD }}@localhost:5432/uneventful_ci?schema=public
           NODE_ENV: test
 
       - name: Verify seed refuses production
@@ -135,8 +168,8 @@ jobs:
           docker run --detach --rm \
             --name uneventful-e2e-object-storage \
             --publish 127.0.0.1:7070:7070 \
-            --env ROOT_ACCESS_KEY=uneventful-e2e-access \
-            --env ROOT_SECRET_KEY=uneventful-e2e-secret-for-tests \
+            --env "ROOT_ACCESS_KEY=$E2E_S3_ACCESS_KEY" \
+            --env "ROOT_SECRET_KEY=$E2E_S3_SECRET_KEY" \
             ghcr.io/versity/versitygw@sha256:dd880fd85c3faba0411da8798d3f6f0827a779d962f257f3624b1fef76d56b7b \
             --port :7070 --health /health --quiet posix /tmp
           for attempt in {1..60}; do
@@ -162,32 +195,36 @@ jobs:
             );
             const testCount = count(report.suites);
             console.log(`Playwright test count: ${testCount}`);
-            const minimumTestCount = 34;
+            const minimumTestCount = 36;
             if (testCount < minimumTestCount) {
               console.error(`Playwright suite ran ${testCount} tests; minimum is ${minimumTestCount}.`);
               process.exit(1);
             }
           ' "$results"
         env:
-          DATABASE_URL: postgresql://uneventful_app:test-app@localhost:5432/uneventful_ci?schema=public
+          DATABASE_URL: postgresql://uneventful_app:${{ env.E2E_APP_DB_PASSWORD }}@localhost:5432/uneventful_ci?schema=public
           REDIS_URL: redis://localhost:6379
           NEXT_PUBLIC_WEB_ORIGIN: http://localhost:3000
           NEXT_PUBLIC_API_BASE_URL: http://localhost:3001/api/v1
           OBJECT_STORAGE_ENDPOINT: http://localhost:7070
-          AWS_ACCESS_KEY_ID: uneventful-e2e-access
-          AWS_SECRET_ACCESS_KEY: uneventful-e2e-secret-for-tests
+          AWS_ACCESS_KEY_ID: ${{ env.E2E_S3_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.E2E_S3_SECRET_KEY }}
+          E2E_TEST_AUTH_BYPASS: '1'
+          E2E_TEST_AUTH_BYPASS_SECRET: ${{ env.E2E_TEST_AUTH_BYPASS_SECRET }}
           NODE_ENV: test
 
       - name: Full Playwright end-to-end suite
-        run: pnpm --filter @uneventful/web test:e2e
+        run: pnpm --filter @uneventful/web test:e2e --workers=2
         env:
-          DATABASE_URL: postgresql://uneventful_app:test-app@localhost:5432/uneventful_ci?schema=public
+          DATABASE_URL: postgresql://uneventful_app:${{ env.E2E_APP_DB_PASSWORD }}@localhost:5432/uneventful_ci?schema=public
           REDIS_URL: redis://localhost:6379
           NEXT_PUBLIC_WEB_ORIGIN: http://localhost:3000
           NEXT_PUBLIC_API_BASE_URL: http://localhost:3001/api/v1
           OBJECT_STORAGE_ENDPOINT: http://localhost:7070
-          AWS_ACCESS_KEY_ID: uneventful-e2e-access
-          AWS_SECRET_ACCESS_KEY: uneventful-e2e-secret-for-tests
+          AWS_ACCESS_KEY_ID: ${{ env.E2E_S3_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.E2E_S3_SECRET_KEY }}
+          E2E_TEST_AUTH_BYPASS: '1'
+          E2E_TEST_AUTH_BYPASS_SECRET: ${{ env.E2E_TEST_AUTH_BYPASS_SECRET }}
           NODE_ENV: test
 
       - name: Stop disposable object-storage service
@@ -233,7 +270,7 @@ jobs:
           ' "$results"
 
           # Raise this threshold whenever integration tests are added.
-          minimum_test_count=106
+          minimum_test_count=118
           if (( test_count < minimum_test_count )); then
             echo "The API integration suite ran $test_count tests; minimum is $minimum_test_count." >&2
             exit 1
@@ -241,8 +278,8 @@ jobs:
 
           exit "$test_exit"
         env:
-          TEST_DATABASE_URL: postgresql://uneventful_app:test-app@localhost:5432/uneventful_ci?schema=public
-          TEST_MIGRATION_DATABASE_URL: postgresql://uneventful_migrator:test-migrator@localhost:5432/uneventful_ci?schema=public
+          TEST_DATABASE_URL: postgresql://uneventful_app:${{ env.E2E_APP_DB_PASSWORD }}@localhost:5432/uneventful_ci?schema=public
+          TEST_MIGRATION_DATABASE_URL: postgresql://uneventful_migrator:${{ env.E2E_MIGRATOR_DB_PASSWORD }}@localhost:5432/uneventful_ci?schema=public
           TEST_REDIS_URL: redis://localhost:6379
 
       - name: Build
@@ -250,6 +287,17 @@ jobs:
         env:
           NEXT_PUBLIC_WEB_ORIGIN: http://localhost:3000
           NEXT_PUBLIC_API_BASE_URL: http://localhost:3001/api/v1
+
+      - name: Verify build created no untracked files
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(git status --porcelain)"
+          if grep -q '^?? ' <<< "$status"; then
+            echo "Build left untracked files in the worktree:" >&2
+            grep '^?? ' <<< "$status" >&2
+            exit 1
+          fi
 
       - name: Verify test auth bypass is excluded from production API build
         shell: bash

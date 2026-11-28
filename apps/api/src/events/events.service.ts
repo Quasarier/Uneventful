@@ -5,7 +5,12 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { EventStatus, Prisma, type UserRole } from '../../generated/prisma/client';
+import {
+  ClubVerificationStatus,
+  EventStatus,
+  Prisma,
+  type UserRole,
+} from '../../generated/prisma/client';
 import { randomUUID } from 'node:crypto';
 import type { AuthPrincipal } from '../auth/auth.types';
 import type { CreateEventDto } from './dto/create-event.dto';
@@ -90,6 +95,13 @@ export class EventsService {
             },
           },
         ],
+      });
+    }
+    if (actor.role !== 'ADMIN') {
+      filters.push({
+        club: {
+          is: { verificationStatus: { not: ClubVerificationStatus.SUSPENDED } },
+        },
       });
     }
     if (query.categoryId) {
@@ -327,6 +339,9 @@ export class EventsService {
   async submit(actor: AuthPrincipal, id: string) {
     const event = await this.requireEvent(id);
     await this.assertCanManageEvent(actor, event);
+    if (!(await this.repository.isActiveClub(event.clubId))) {
+      throw new NotFoundException('Event not found.');
+    }
     if (event.status !== EventStatus.DRAFT && event.status !== EventStatus.REJECTED) {
       throw new ConflictException('Only draft or rejected events can be submitted.');
     }
@@ -524,6 +539,12 @@ export class EventsService {
   }
 
   private async assertCanView(actor: AuthPrincipal, event: EventRecord): Promise<void> {
+    if (
+      actor.role !== 'ADMIN' &&
+      event.club.verificationStatus === ClubVerificationStatus.SUSPENDED
+    ) {
+      throw new NotFoundException('Event not found.');
+    }
     if (
       actor.role === 'ADMIN' ||
       (event.status === EventStatus.APPROVED &&

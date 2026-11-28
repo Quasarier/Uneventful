@@ -7,6 +7,7 @@ import type { AuthenticatedRequest } from '../auth/auth.types';
 import type { Response } from 'express';
 import { EventsController } from './events.controller';
 import type { EventsService } from './events.service';
+import type { AdminService } from '../admin/admin.service';
 
 const eventId = 'c5a59258-67d1-457a-a93f-e7993f31befa';
 const principal = {
@@ -48,6 +49,7 @@ describe('EventsController image delivery rate limit', () => {
     const controller = new EventsController(
       events as unknown as EventsService,
       rateLimit as unknown as AuthRateLimitService,
+      {} as AdminService,
     );
 
     const response = makeResponse();
@@ -87,6 +89,7 @@ describe('EventsController image delivery rate limit', () => {
     const controller = new EventsController(
       events as unknown as EventsService,
       rateLimit as unknown as AuthRateLimitService,
+      {} as AdminService,
     );
 
     await expect(controller.getImage(makeRequest(), eventId, makeResponse())).rejects.toThrow(

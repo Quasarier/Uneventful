@@ -16,7 +16,7 @@ export class AnalyticsCacheService {
 
   async getOrCompute<T>(
     key: string,
-    indexes: readonly string[],
+    indexes: readonly string[] | ((value: T) => readonly string[]),
     decode: CacheDecoder<T>,
     compute: () => Promise<T>,
   ): Promise<T> {
@@ -31,7 +31,8 @@ export class AnalyticsCacheService {
       const value = await compute();
       const pipeline = this.redis.pipeline();
       pipeline.set(key, JSON.stringify(value), 'EX', CACHE_TTL_SECONDS);
-      for (const index of indexes) {
+      const resolvedIndexes = typeof indexes === 'function' ? indexes(value) : indexes;
+      for (const index of resolvedIndexes) {
         pipeline.sadd(index, key);
         pipeline.expire(index, CACHE_TTL_SECONDS * 2);
       }
@@ -50,14 +51,24 @@ export class AnalyticsCacheService {
       where: { id: eventId },
       select: { clubId: true },
     });
-    const keys = [`analytics:event:index:${eventId}`];
+    const keys = [`analytics:event:index:${eventId}`, `recommendations:event:index:${eventId}`];
     if (event) keys.push(`analytics:club:index:${event.clubId}`);
     if (userId) keys.push(`recommendations:user:index:${userId}`);
     await this.deleteIndexed(keys);
   }
 
   async invalidateClub(clubId: string, userId?: string): Promise<void> {
-    const keys = [`analytics:club:index:${clubId}`];
+    const eventIds = await this.prisma.event.findMany({
+      where: { clubId },
+      select: { id: true },
+    });
+    const keys = [
+      `analytics:club:index:${clubId}`,
+      ...eventIds.flatMap(({ id }) => [
+        `analytics:event:index:${id}`,
+        `recommendations:event:index:${id}`,
+      ]),
+    ];
     if (userId) keys.push(`recommendations:user:index:${userId}`);
     await this.deleteIndexed(keys);
   }

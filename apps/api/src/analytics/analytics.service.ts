@@ -5,7 +5,12 @@ import {
   PayloadTooLargeException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { EventStatus, NotificationConsentAction, RsvpStatus } from '../../generated/prisma/client';
+import {
+  ClubVerificationStatus,
+  EventStatus,
+  NotificationConsentAction,
+  RsvpStatus,
+} from '../../generated/prisma/client';
 import type { AuthPrincipal } from '../auth/auth.types';
 import type { Environment } from '../config/environment';
 import { PrismaService } from '../database/prisma.service';
@@ -506,7 +511,10 @@ export class AnalyticsService {
     const key = `recommendations:user:${actor.id}:${version}`;
     return this.cache.getOrCompute(
       key,
-      [`recommendations:user:index:${actor.id}`],
+      (recommendations) => [
+        `recommendations:user:index:${actor.id}`,
+        ...recommendations.data.map(({ event }) => `recommendations:event:index:${event.id}`),
+      ],
       decodeRecommendations,
       () => this.buildRecommendations(actor.id, preference?.personalized ?? true),
     );
@@ -543,6 +551,7 @@ export class AnalyticsService {
               club: {
                 is: {
                   deletedAt: null,
+                  verificationStatus: { not: ClubVerificationStatus.SUSPENDED },
                   memberships: {
                     some: {
                       userId: actor.id,
@@ -571,6 +580,7 @@ export class AnalyticsService {
         ...(actor.role === 'ADMIN'
           ? {}
           : {
+              verificationStatus: { not: ClubVerificationStatus.SUSPENDED },
               memberships: {
                 some: {
                   userId: actor.id,
@@ -836,7 +846,9 @@ export class AnalyticsService {
       LEFT JOIN rsvps r ON r.event_id = e.id AND r.status::text IN ('GOING', 'CHECKED_IN')
       WHERE e.status = ${EventStatus.APPROVED}::event_status
         AND e.deleted_at IS NULL
-        AND c.deleted_at IS NULL AND category.deleted_at IS NULL
+        AND c.deleted_at IS NULL
+        AND c.verification_status <> ${ClubVerificationStatus.SUSPENDED}::club_verification_status
+        AND category.deleted_at IS NULL
         AND e.start_at > NOW()
         AND (
           e.is_public = TRUE
@@ -908,11 +920,14 @@ export class AnalyticsService {
       JOIN rsvps other_rsvp ON other_rsvp.user_id = source_rsvp.user_id
       JOIN users support_user ON support_user.id = other_rsvp.user_id
       JOIN events candidate ON candidate.id = other_rsvp.event_id
+      JOIN clubs candidate_club ON candidate_club.id = candidate.club_id
       WHERE other_rsvp.user_id <> ${userId}::uuid
         AND support_user.role::text = 'STUDENT'
         AND support_user.is_active = TRUE AND support_user.deleted_at IS NULL
         AND other_rsvp.status::text IN ('GOING', 'CHECKED_IN')
         AND candidate.status = ${EventStatus.APPROVED}::event_status
+        AND candidate_club.verification_status <> ${ClubVerificationStatus.SUSPENDED}::club_verification_status
+        AND candidate_club.deleted_at IS NULL
         AND candidate.is_public = TRUE AND candidate.deleted_at IS NULL
         AND candidate.start_at > NOW()
         AND NOT EXISTS (

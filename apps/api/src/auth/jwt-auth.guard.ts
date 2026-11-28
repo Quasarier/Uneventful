@@ -1,10 +1,17 @@
-import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
+import type { Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { Reflector } from '@nestjs/core';
 import type { Environment } from '../config/environment';
 import { AuthService } from './auth.service';
 import { AuthRateLimitService, type RateLimitMessages } from './auth-rate-limit.service';
-import { IS_OPTIONAL_AUTH_KEY, IS_PUBLIC_KEY } from './auth.decorators';
+import { ADMIN_ONLY_KEY, IS_OPTIONAL_AUTH_KEY, IS_PUBLIC_KEY } from './auth.decorators';
 import type { AuthenticatedRequest } from './auth.types';
 
 const anonymousRateLimitMessages: RateLimitMessages = {
@@ -33,6 +40,17 @@ export class JwtAuthGuard implements CanActivate {
 
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const authorization = request.headers.authorization;
+    const isAdminOnly = this.reflector.getAllAndOverride<boolean>(ADMIN_ONLY_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (isAdminOnly) {
+      request.adminOnly = true;
+      context
+        .switchToHttp()
+        .getResponse<Response>()
+        .setHeader('Cache-Control', 'private, no-store');
+    }
     const isOptionalAuth = this.reflector.getAllAndOverride<boolean>(IS_OPTIONAL_AUTH_KEY, [
       context.getHandler(),
       context.getClass(),
@@ -44,14 +62,26 @@ export class JwtAuthGuard implements CanActivate {
     const match = authorization?.match(/^Bearer ([A-Za-z0-9._~-]+)$/);
 
     if (!match?.[1]) {
+      if (isAdminOnly) {
+        throw new NotFoundException('Resource not found.');
+      }
       await this.consumeAnonymousRequest(request);
       throw new UnauthorizedException('Bearer access token required.');
     }
 
     try {
-      request.user = await this.authService.authenticateAccessToken(match[1]);
+      if (isAdminOnly) {
+        const session = await this.authService.authenticateAccessTokenSession(match[1]);
+        request.user = session.principal;
+        request.accessSession = session;
+      } else {
+        request.user = await this.authService.authenticateAccessToken(match[1]);
+      }
     } catch (error) {
       if (error instanceof UnauthorizedException) {
+        if (isAdminOnly) {
+          throw new NotFoundException('Resource not found.');
+        }
         await this.consumeAnonymousRequest(request);
       }
       throw error;

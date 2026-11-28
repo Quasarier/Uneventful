@@ -24,10 +24,30 @@ RUN_ID="$(date +%s)-$$"
 POSTGRES_CONTAINER="uneventful-it-postgres-$RUN_ID"
 REDIS_CONTAINER="uneventful-it-redis-$RUN_ID"
 OBJECT_STORAGE_CONTAINER="uneventful-it-object-storage-$RUN_ID"
+INTEGRATION_RESULTS="$(mktemp)"
+PLAYWRIGHT_RESULTS="$(mktemp)"
+PLAYWRIGHT_ARGS=()
+
+if [ -n "${PLAYWRIGHT_WORKERS:-}" ]; then
+  if ! [[ "$PLAYWRIGHT_WORKERS" =~ ^[1-9][0-9]*$ ]]; then
+    echo "PLAYWRIGHT_WORKERS must be a positive integer." >&2
+    exit 1
+  fi
+  PLAYWRIGHT_ARGS+=(--workers="$PLAYWRIGHT_WORKERS")
+fi
+
+if [ -n "${PLAYWRIGHT_REPEAT_EACH:-}" ]; then
+  if ! [[ "$PLAYWRIGHT_REPEAT_EACH" =~ ^[1-9][0-9]*$ ]]; then
+    echo "PLAYWRIGHT_REPEAT_EACH must be a positive integer." >&2
+    exit 1
+  fi
+  PLAYWRIGHT_ARGS+=(--repeat-each="$PLAYWRIGHT_REPEAT_EACH")
+fi
 
 cleanup() {
   status=$?
   trap - EXIT INT TERM
+  rm -f "$INTEGRATION_RESULTS" "$PLAYWRIGHT_RESULTS"
   docker rm --force "$OBJECT_STORAGE_CONTAINER" >/dev/null 2>&1 || true
   docker rm --force "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
   docker rm --force "$REDIS_CONTAINER" >/dev/null 2>&1 || true
@@ -66,7 +86,7 @@ run_pnpm() {
   if [ "$PNPM_MODE" = "native" ]; then
     corepack pnpm "$@"
   else
-    export WSLENV="${WSLENV:+$WSLENV:}DATABASE_URL:MIGRATION_DATABASE_URL:REDIS_URL:TEST_DATABASE_URL:TEST_MIGRATION_DATABASE_URL:TEST_REDIS_URL:OBJECT_STORAGE_ENDPOINT:AWS_ACCESS_KEY_ID:AWS_SECRET_ACCESS_KEY:NODE_ENV"
+    export WSLENV="${WSLENV:+$WSLENV:}DATABASE_URL:MIGRATION_DATABASE_URL:SHADOW_DATABASE_URL:REDIS_URL:TEST_DATABASE_URL:TEST_MIGRATION_DATABASE_URL:TEST_REDIS_URL:OBJECT_STORAGE_ENDPOINT:AWS_ACCESS_KEY_ID:AWS_SECRET_ACCESS_KEY:NODE_ENV"
     cmd.exe /d /s /c "corepack pnpm $*"
   fi
 }
@@ -182,6 +202,7 @@ fi
 
 DATABASE_URL="postgresql://uneventful_app:$APP_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB?schema=public"
 MIGRATION_DATABASE_URL="postgresql://uneventful_migrator:$MIGRATOR_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB?schema=public"
+SHADOW_DATABASE_URL="postgresql://uneventful_migrator:$MIGRATOR_PASSWORD@127.0.0.1:$POSTGRES_PORT/${POSTGRES_DB}_shadow?schema=public"
 TEST_DATABASE_URL="$DATABASE_URL"
 TEST_MIGRATION_DATABASE_URL="$MIGRATION_DATABASE_URL"
 TEST_REDIS_URL="redis://:$REDIS_PASSWORD@127.0.0.1:$REDIS_PORT"
@@ -192,6 +213,7 @@ AWS_SECRET_ACCESS_KEY="$OBJECT_STORAGE_SECRET_KEY"
 
 validate_local_url DATABASE_URL "$DATABASE_URL"
 validate_local_url MIGRATION_DATABASE_URL "$MIGRATION_DATABASE_URL"
+validate_local_url SHADOW_DATABASE_URL "$SHADOW_DATABASE_URL"
 validate_local_url TEST_DATABASE_URL "$TEST_DATABASE_URL"
 validate_local_url TEST_MIGRATION_DATABASE_URL "$TEST_MIGRATION_DATABASE_URL"
 validate_local_url TEST_REDIS_URL "$TEST_REDIS_URL"
@@ -215,7 +237,7 @@ if [ "$storage_ready" != "1" ]; then
   exit 1
 fi
 
-export DATABASE_URL MIGRATION_DATABASE_URL TEST_DATABASE_URL
+export DATABASE_URL MIGRATION_DATABASE_URL SHADOW_DATABASE_URL TEST_DATABASE_URL
 export TEST_MIGRATION_DATABASE_URL TEST_REDIS_URL REDIS_URL
 export OBJECT_STORAGE_ENDPOINT AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
 export NODE_ENV=test
@@ -231,6 +253,15 @@ docker exec -i \
 
 echo "Applying all migrations to the disposable PostgreSQL database..."
 run_pnpm --filter @uneventful/api db:deploy
+
+echo "Verifying Prisma migrations match the schema..."
+run_pnpm --filter @uneventful/api exec prisma migrate diff \
+  --from-migrations prisma/migrations \
+  --to-schema prisma/schema.prisma \
+  --exit-code
+
+echo "Seeding the disposable database to match CI..."
+run_pnpm --filter @uneventful/api db:seed
 
 echo "Verifying database constraints and application-role privileges..."
 MIGRATION_DATABASE_URL="$DATABASE_URL" \
@@ -255,12 +286,44 @@ if ! grep -Fq "Database seeding is disabled in production." <<<"$seed_output"; t
 fi
 echo "Seed refused production as expected."
 
-echo "Running API PostgreSQL and Redis integration tests..."
-run_pnpm --filter @uneventful/api test:integration
-
 if [ "${RUN_E2E:-0}" = "1" ]; then
+  echo "Verifying the Playwright test-count minimum..."
+  run_pnpm --filter @uneventful/web exec playwright test --list --reporter=json \
+    > "$PLAYWRIGHT_RESULTS"
+  node - "$PLAYWRIGHT_RESULTS" <<'NODE'
+const fs = require('node:fs');
+const report = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const count = (suites) => suites.reduce(
+  (total, suite) => total + (suite.specs?.length ?? 0) + count(suite.suites ?? []),
+  0
+);
+const testCount = count(report.suites);
+const minimum = 36;
+console.log(`Playwright test count: ${testCount}`);
+if (testCount < minimum) {
+  console.error(`The Playwright suite contains ${testCount} tests; minimum is ${minimum}.`);
+  process.exit(1);
+}
+NODE
   echo "Running the full Playwright suite against the disposable API, PostgreSQL, and Redis..."
-  run_pnpm --filter @uneventful/web test:e2e
+run_pnpm --filter @uneventful/web test:e2e "${PLAYWRIGHT_ARGS[@]}"
 fi
+
+echo "Running API PostgreSQL and Redis integration tests..."
+run_pnpm --filter @uneventful/api test:integration \
+--reporter=default \
+--reporter=json \
+"--outputFile.json=$INTEGRATION_RESULTS"
+node - "$INTEGRATION_RESULTS" <<'NODE'
+const fs = require('node:fs');
+const report = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const count = report.numTotalTests;
+const minimum = 118;
+console.log(`API integration test count: ${count}`);
+if (!Number.isSafeInteger(count) || count < minimum) {
+console.error(`The API integration suite ran ${count} tests; minimum is ${minimum}.`);
+process.exit(1);
+}
+NODE
 
 echo "Integration tests passed; disposable containers will now be removed."
