@@ -8,7 +8,7 @@ import webPush from 'web-push';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
 import type { Environment } from '../../src/config/environment';
-import { HttpExceptionFilter } from '../../src/http-exception.filter';
+import { E2eHttpExceptionFilter } from './e2e-http-exception.filter';
 import { configureRequestBodyLimits } from '../../src/request-body-limits';
 import { RealtimeIoAdapter } from '../../src/realtime/realtime-io.adapter';
 import { createCorsOptions, helmetOptions } from '../../src/http-security';
@@ -99,7 +99,7 @@ async function bootstrap(): Promise<void> {
       transform: true,
     }),
   );
-  app.useGlobalFilters(new HttpExceptionFilter());
+  app.useGlobalFilters(new E2eHttpExceptionFilter());
   await app.listen(config.get('PORT', { infer: true }), '0.0.0.0');
 }
 
