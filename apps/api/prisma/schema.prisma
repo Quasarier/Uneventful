@@ -277,7 +277,7 @@ model ClubMembership {
   @@unique([clubId, userId])
   @@index([userId, status])
   @@index([clubId, status])
-  @@index([clubId, status, joinedAt])
+  @@index([clubId, status, joinedAt], map: "club_memberships_club_status_joined_analytics_idx")
   @@map("club_memberships")
 }
 
@@ -386,6 +386,8 @@ model Event {
   @@index([startAt])
   @@index([status, startAt])
   @@index([clubId, startAt])
+  @@index([clubId, status, startAt], map: "events_club_status_start_idx")
+  @@index([venueId, startAt], map: "events_venue_id_start_at_idx")
   @@index([categoryId, startAt])
   @@index([createdById, createdAt])
   @@index([deletedAt])
@@ -430,7 +432,7 @@ model Rsvp {
 
   @@unique([eventId, userId])
   @@index([eventId, status, createdAt])
-  @@index([eventId, createdAt, status])
+  @@index([eventId, createdAt, status], map: "rsvps_event_created_status_analytics_idx")
   @@index([userId, status, createdAt])
   @@map("rsvps")
 }
@@ -477,6 +479,7 @@ model CheckIn {
   checkedInBy   User          @relation("CheckInActor", fields: [checkedInById], references: [id], onDelete: Restrict)
 
   @@index([checkedInById, checkedInAt])
+  @@index([checkedInAt], map: "check_ins_checked_in_at_idx")
   @@map("check_ins")
 }
 
