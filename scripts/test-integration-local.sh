@@ -26,6 +26,23 @@ REDIS_CONTAINER="uneventful-it-redis-$RUN_ID"
 OBJECT_STORAGE_CONTAINER="uneventful-it-object-storage-$RUN_ID"
 INTEGRATION_RESULTS="$(mktemp)"
 PLAYWRIGHT_RESULTS="$(mktemp)"
+PLAYWRIGHT_ARGS=()
+
+if [ -n "${PLAYWRIGHT_WORKERS:-}" ]; then
+  if ! [[ "$PLAYWRIGHT_WORKERS" =~ ^[1-9][0-9]*$ ]]; then
+    echo "PLAYWRIGHT_WORKERS must be a positive integer." >&2
+    exit 1
+  fi
+  PLAYWRIGHT_ARGS+=(--workers="$PLAYWRIGHT_WORKERS")
+fi
+
+if [ -n "${PLAYWRIGHT_REPEAT_EACH:-}" ]; then
+  if ! [[ "$PLAYWRIGHT_REPEAT_EACH" =~ ^[1-9][0-9]*$ ]]; then
+    echo "PLAYWRIGHT_REPEAT_EACH must be a positive integer." >&2
+    exit 1
+  fi
+  PLAYWRIGHT_ARGS+=(--repeat-each="$PLAYWRIGHT_REPEAT_EACH")
+fi
 
 cleanup() {
   status=$?
@@ -235,6 +252,9 @@ docker exec -i \
 echo "Applying all migrations to the disposable PostgreSQL database..."
 run_pnpm --filter @uneventful/api db:deploy
 
+echo "Seeding the disposable database to match CI..."
+run_pnpm --filter @uneventful/api db:seed
+
 echo "Verifying database constraints and application-role privileges..."
 MIGRATION_DATABASE_URL="$DATABASE_URL" \
   run_pnpm --filter @uneventful/api exec prisma db execute --file prisma/verify-constraints.sql
@@ -258,23 +278,6 @@ if ! grep -Fq "Database seeding is disabled in production." <<<"$seed_output"; t
 fi
 echo "Seed refused production as expected."
 
-echo "Running API PostgreSQL and Redis integration tests..."
-run_pnpm --filter @uneventful/api test:integration \
-  --reporter=default \
-  --reporter=json \
-  "--outputFile.json=$INTEGRATION_RESULTS"
-node - "$INTEGRATION_RESULTS" <<'NODE'
-const fs = require('node:fs');
-const report = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-const count = report.numTotalTests;
-const minimum = 118;
-console.log(`API integration test count: ${count}`);
-if (!Number.isSafeInteger(count) || count < minimum) {
-  console.error(`The API integration suite ran ${count} tests; minimum is ${minimum}.`);
-  process.exit(1);
-}
-NODE
-
 if [ "${RUN_E2E:-0}" = "1" ]; then
   echo "Verifying the Playwright test-count minimum..."
   run_pnpm --filter @uneventful/web exec playwright test --list --reporter=json \
@@ -295,7 +298,24 @@ if (testCount < minimum) {
 }
 NODE
   echo "Running the full Playwright suite against the disposable API, PostgreSQL, and Redis..."
-  run_pnpm --filter @uneventful/web test:e2e
+run_pnpm --filter @uneventful/web test:e2e "${PLAYWRIGHT_ARGS[@]}"
 fi
+
+echo "Running API PostgreSQL and Redis integration tests..."
+run_pnpm --filter @uneventful/api test:integration \
+--reporter=default \
+--reporter=json \
+"--outputFile.json=$INTEGRATION_RESULTS"
+node - "$INTEGRATION_RESULTS" <<'NODE'
+const fs = require('node:fs');
+const report = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const count = report.numTotalTests;
+const minimum = 118;
+console.log(`API integration test count: ${count}`);
+if (!Number.isSafeInteger(count) || count < minimum) {
+console.error(`The API integration suite ran ${count} tests; minimum is ${minimum}.`);
+process.exit(1);
+}
+NODE
 
 echo "Integration tests passed; disposable containers will now be removed."

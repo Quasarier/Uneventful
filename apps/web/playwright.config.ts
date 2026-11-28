@@ -53,6 +53,7 @@ export default defineConfig({
         'corepack pnpm --filter @uneventful/web build && corepack pnpm --filter @uneventful/web start',
       url: webOrigin,
       reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
       env: {
         NODE_ENV: 'production',
         NEXT_PUBLIC_WEB_ORIGIN: webOrigin,
