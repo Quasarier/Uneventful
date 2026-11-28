@@ -92,10 +92,21 @@ jobs:
           MIGRATION_DATABASE_URL: postgresql://uneventful_migrator:${{ env.E2E_MIGRATOR_DB_PASSWORD }}@localhost:5432/uneventful_ci?schema=public
           NODE_ENV: test
 
-      - name: Apply migrations and seed test data
+      - name: Apply migrations and verify Prisma schema
         run: |
           pnpm --filter @uneventful/api db:deploy
-          pnpm --filter @uneventful/api db:seed
+          pnpm --filter @uneventful/api exec prisma migrate diff \
+            --from-migrations prisma/migrations \
+            --to-schema prisma/schema.prisma \
+            --exit-code
+        env:
+          DATABASE_URL: postgresql://uneventful_app:${{ env.E2E_APP_DB_PASSWORD }}@localhost:5432/uneventful_ci?schema=public
+          MIGRATION_DATABASE_URL: postgresql://uneventful_migrator:${{ env.E2E_MIGRATOR_DB_PASSWORD }}@localhost:5432/uneventful_ci?schema=public
+          SHADOW_DATABASE_URL: postgresql://uneventful_migrator:${{ env.E2E_MIGRATOR_DB_PASSWORD }}@localhost:5432/uneventful_ci_shadow?schema=public
+          NODE_ENV: test
+
+      - name: Seed test data
+        run: pnpm --filter @uneventful/api db:seed
         env:
           DATABASE_URL: postgresql://uneventful_app:${{ env.E2E_APP_DB_PASSWORD }}@localhost:5432/uneventful_ci?schema=public
           MIGRATION_DATABASE_URL: postgresql://uneventful_migrator:${{ env.E2E_MIGRATOR_DB_PASSWORD }}@localhost:5432/uneventful_ci?schema=public
@@ -276,6 +287,17 @@ jobs:
         env:
           NEXT_PUBLIC_WEB_ORIGIN: http://localhost:3000
           NEXT_PUBLIC_API_BASE_URL: http://localhost:3001/api/v1
+
+      - name: Verify build created no untracked files
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(git status --porcelain)"
+          if grep -q '^?? ' <<< "$status"; then
+            echo "Build left untracked files in the worktree:" >&2
+            grep '^?? ' <<< "$status" >&2
+            exit 1
+          fi
 
       - name: Verify test auth bypass is excluded from production API build
         shell: bash

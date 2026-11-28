@@ -86,7 +86,7 @@ run_pnpm() {
   if [ "$PNPM_MODE" = "native" ]; then
     corepack pnpm "$@"
   else
-    export WSLENV="${WSLENV:+$WSLENV:}DATABASE_URL:MIGRATION_DATABASE_URL:REDIS_URL:TEST_DATABASE_URL:TEST_MIGRATION_DATABASE_URL:TEST_REDIS_URL:OBJECT_STORAGE_ENDPOINT:AWS_ACCESS_KEY_ID:AWS_SECRET_ACCESS_KEY:NODE_ENV"
+    export WSLENV="${WSLENV:+$WSLENV:}DATABASE_URL:MIGRATION_DATABASE_URL:SHADOW_DATABASE_URL:REDIS_URL:TEST_DATABASE_URL:TEST_MIGRATION_DATABASE_URL:TEST_REDIS_URL:OBJECT_STORAGE_ENDPOINT:AWS_ACCESS_KEY_ID:AWS_SECRET_ACCESS_KEY:NODE_ENV"
     cmd.exe /d /s /c "corepack pnpm $*"
   fi
 }
@@ -202,6 +202,7 @@ fi
 
 DATABASE_URL="postgresql://uneventful_app:$APP_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB?schema=public"
 MIGRATION_DATABASE_URL="postgresql://uneventful_migrator:$MIGRATOR_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB?schema=public"
+SHADOW_DATABASE_URL="postgresql://uneventful_migrator:$MIGRATOR_PASSWORD@127.0.0.1:$POSTGRES_PORT/${POSTGRES_DB}_shadow?schema=public"
 TEST_DATABASE_URL="$DATABASE_URL"
 TEST_MIGRATION_DATABASE_URL="$MIGRATION_DATABASE_URL"
 TEST_REDIS_URL="redis://:$REDIS_PASSWORD@127.0.0.1:$REDIS_PORT"
@@ -212,6 +213,7 @@ AWS_SECRET_ACCESS_KEY="$OBJECT_STORAGE_SECRET_KEY"
 
 validate_local_url DATABASE_URL "$DATABASE_URL"
 validate_local_url MIGRATION_DATABASE_URL "$MIGRATION_DATABASE_URL"
+validate_local_url SHADOW_DATABASE_URL "$SHADOW_DATABASE_URL"
 validate_local_url TEST_DATABASE_URL "$TEST_DATABASE_URL"
 validate_local_url TEST_MIGRATION_DATABASE_URL "$TEST_MIGRATION_DATABASE_URL"
 validate_local_url TEST_REDIS_URL "$TEST_REDIS_URL"
@@ -235,7 +237,7 @@ if [ "$storage_ready" != "1" ]; then
   exit 1
 fi
 
-export DATABASE_URL MIGRATION_DATABASE_URL TEST_DATABASE_URL
+export DATABASE_URL MIGRATION_DATABASE_URL SHADOW_DATABASE_URL TEST_DATABASE_URL
 export TEST_MIGRATION_DATABASE_URL TEST_REDIS_URL REDIS_URL
 export OBJECT_STORAGE_ENDPOINT AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
 export NODE_ENV=test
@@ -251,6 +253,12 @@ docker exec -i \
 
 echo "Applying all migrations to the disposable PostgreSQL database..."
 run_pnpm --filter @uneventful/api db:deploy
+
+echo "Verifying Prisma migrations match the schema..."
+run_pnpm --filter @uneventful/api exec prisma migrate diff \
+  --from-migrations prisma/migrations \
+  --to-schema prisma/schema.prisma \
+  --exit-code
 
 echo "Seeding the disposable database to match CI..."
 run_pnpm --filter @uneventful/api db:seed
